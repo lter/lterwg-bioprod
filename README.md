@@ -8,8 +8,8 @@
 
 ## Project summary
 
-<a href="https://lternet.edu/working-groups/scaling-productivity-responses-changes-biodiversity/" target="_blank">https://lternet.edu/working-groups/scaling-productivity-responses-changes-biodiversity/</a>
+https://lternet.edu/working-groups/scaling-productivity-responses-changes-biodiversity/
 
 ## Info for Participants
 
-<a href="https://www.nceas.ucsb.edu/projects/12765" target="_blank">https://www.nceas.ucsb.edu/projects/12765</a>
+https://www.nceas.ucsb.edu/projects/12765
