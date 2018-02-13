@@ -12,5 +12,4 @@
 
 ## Info for Participants
 
-https://www.nceas.ucsb.edu/projects/12765
 <a href="https://www.nceas.ucsb.edu/projects/12765" target="_blank">https://www.nceas.ucsb.edu/projects/12765</a>
