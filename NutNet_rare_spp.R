@@ -20,6 +20,29 @@ theme_update(axis.title.x=element_text(size=20, vjust=-0.35, margin=margin(t=15)
              panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
              legend.title=element_blank(), legend.text=element_text(size=20))
 
+###bar graph summary statistics function
+#barGraphStats(data=, variable="", byFactorNames=c(""))
+
+barGraphStats <- function(data, variable, byFactorNames) {
+  count <- length(byFactorNames)
+  N <- aggregate(data[[variable]], data[byFactorNames], FUN=length)
+  names(N)[1:count] <- byFactorNames
+  names(N) <- sub("^x$", "N", names(N))
+  mean <- aggregate(data[[variable]], data[byFactorNames], FUN=mean)
+  names(mean)[1:count] <- byFactorNames
+  names(mean) <- sub("^x$", "mean", names(mean))
+  sd <- aggregate(data[[variable]], data[byFactorNames], FUN=sd)
+  names(sd)[1:count] <- byFactorNames
+  names(sd) <- sub("^x$", "sd", names(sd))
+  preSummaryStats <- merge(N, mean, by=byFactorNames)
+  finalSummaryStats <- merge(preSummaryStats, sd, by=byFactorNames)
+  finalSummaryStats$se <- finalSummaryStats$sd / sqrt(finalSummaryStats$N)
+  return(finalSummaryStats)
+}  
+
+
+
+#########
 nutnetdf <-read.csv("full-cover-31-August-2018.csv")
 # 
 # nutnetpretreatdt <- data.table(nutnetpretreatdf)
@@ -104,7 +127,7 @@ nutnetdf_allspp3 <- nutnetdf_allspp2%>%
   merge(meanAb_byspecies, by=c('site_code', 'Taxon'))%>%
   merge(max_abund, by=c('site_code', 'Taxon'))%>%
   merge(freq, by=c('site_code', 'Taxon'))%>%
-  mutate(abund_metric=(2*meanPTAbundance+freq)/3)%>%
+  mutate(abund_metric=((meanPTAbundance/100)+freq)/2)%>%
   select(-PTfreq)%>%
   filter(length>0)
 
@@ -148,7 +171,7 @@ trt <- nutnetRel%>%
 nutnetdf_allspp3Trt <- nutnetdf_allspp3%>%
   merge(trt, by=c('site_code', 'plot'))
 
-ggplot(nutnetdf_allspp3Trt, aes(x=abund_metric, y=yrs_absent, color=length)) +
+ggplot(data=subset(nutnetdf_allspp3Trt, trt!='NA'), aes(x=abund_metric, y=yrs_absent, color=length)) +
   geom_point(size=3) +
   xlab('Pre-Treatment Modified Importance Index') +
   ylab('Proportion of Years Absent') +
@@ -194,7 +217,7 @@ nutnetConsAbs2 <- nutnetConsAbs%>%
   merge(meanAb_byspecies, by=c('site_code', 'Taxon'))%>%
   merge(max_abund, by=c('site_code', 'Taxon'))%>%
   merge(freq, by=c('site_code', 'Taxon'))%>%
-  mutate(abund_metric=(2*meanPTAbundance+PTfreq)/3)%>%
+  mutate(abund_metric=((meanPTAbundance/100)+PTfreq)/2)%>%
   merge(nutnetdf_length, by=c('site_code'))
 
 ggplot(subset(nutnetConsAbs2, length==9), aes(x=abund_metric, y=cons_abs_max)) +
@@ -219,7 +242,7 @@ nutnetPresAbs <- nutnetdf_allspp%>%
   merge(meanAb_byspecies, by=c('site_code', 'Taxon'))%>%
   merge(max_abund, by=c('site_code', 'Taxon'))%>%
   merge(freq, by=c('site_code', 'Taxon'))%>%
-  mutate(abund_metric=(2*meanPTAbundance+PTfreq)/3)%>%
+  mutate(abund_metric=((meanPTAbundance/100)+PTfreq)/2)%>%
   filter(year_trt>0)
 
 ggplot(nutnetPresAbs, aes(x=abund_metric, y=PA, color=trt)) +
@@ -253,7 +276,7 @@ ggplot(nutnet_finalabund2, aes(x=abund_metric, y=final_cover)) +
 
 
 ###bring in biomass (function) component
-biomass <- read.csv('full-biomass-09-June-2017.csv')%>%
+biomass <- read.csv('full-biomass-31-August-2018.csv')%>%
   filter(live==1)%>%
   group_by(site_code, plot, subplot, year_trt)%>%
   summarise(mass2=sum(mass))%>%
@@ -261,13 +284,15 @@ biomass <- read.csv('full-biomass-09-June-2017.csv')%>%
   group_by(site_code, plot, year_trt)%>%
   summarise(anpp=mean(mass2))
 
+hist(biomass$anpp)
+
 biomassSpp <- nutnetdf_allspp%>%
   filter(rel_cover>0)%>%
   merge(biomass, by=c('site_code', 'plot', 'year_trt'))%>%
   merge(meanAb_byspecies, by=c('site_code', 'Taxon'))%>%
   merge(max_abund, by=c('site_code', 'Taxon'))%>%
   merge(freq, by=c('site_code', 'Taxon'))%>%
-  mutate(abund_metric=(2*meanPTAbundance+freq)/3)%>%
+  mutate(abund_metric=((meanPTAbundance/100)+freq)/2)%>%
   select(-PTfreq)%>%
   group_by(site_code, plot, year_trt)%>%
   summarise(biomass=mean(anpp), importance=mean(abund_metric), min_importance=min(abund_metric))
@@ -279,12 +304,278 @@ ggplot(biomassSpp, aes(x=importance, y=biomass)) +
 #export at 900x900
 
 
+###figures comparable to Biotime
+
+#biomass response by trt
+biomassResp <- biomass%>%
+  left_join(trt)%>%
+  filter(year_trt!=0)%>%
+  group_by(site_code, year_trt, trt)%>%
+  summarise(anpp_mean=mean(anpp))%>%
+  ungroup()%>%
+  spread(key=trt, value=anpp_mean)%>%
+  mutate(NPK_diff=(NPK-Control)/Control, Fence_diff=(Fence-Control)/Control, NPKfence_diff=(NPK+Fence-Control)/Control)%>%
+  select(site_code, year_trt, NPK_diff, Fence_diff, NPKfence_diff)%>%
+  na.omit()%>%
+  gather(key=trt, value=diff, NPK_diff:NPKfence_diff)
+
+ggplot(data=barGraphStats(data=biomassResp, variable="diff", byFactorNames=c("year_trt", "trt")), aes(x=year_trt, y=mean, color=trt)) +
+  geom_point(size=5) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment Year') + ylab('Biomass Difference (%)') +
+  geom_hline(yintercept=0)
+#export at 1200x800
+
+
+###split species into groups within sites by dominance
+
+#make a new dataframe with just the label
+site_code=nutnetdf_allspp3Trt%>%
+  select(site_code)%>%
+  unique()
+
+#makes an empty dataframe
+nutnetSppGroups=data.frame(row.names=1) 
+
+
+#loop through sites to get their species' dominance ranks (3 groups)
+for(i in 1:length(site_code$site_code)) {
+  
+  #creates a dataset for each unique year, trt, exp combo
+  subset=nutnetdf_allspp3Trt[nutnetdf_allspp3Trt$site_code==as.character(site_code$site_code[i]),]%>%
+    select(site_code, Taxon, abund_metric, meanPTAbundance)%>%
+    unique()
+  
+  #group by Dominance Indicator index (DI)
+  subset$DI_group <- ntile(subset$abund_metric, 3)
+  
+  #group by mean abundance in pretrt data
+  subset$abund_group <- ntile(subset$meanPTAbundance, 3)
+  
+  #pasting dispersions into the dataframe made for this analysis
+  nutnetSppGroups=rbind(subset, nutnetSppGroups)  
+}
+
+
+
+#########
+#everything below is really messy and needs shortening
+#########
+
+#merge groupings with data
+nutnetRichnessDI <- nutnetPresAbs%>%
+  select(site_code, Taxon, plot, year_trt, trt, rel_cover)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(DI=ifelse(DI_group==1, 'rare', ifelse(DI_group==2, 'int', 'common')))%>%
+  filter(rel_cover>0)%>%
+  group_by(site_code, year_trt, trt, DI)%>%
+  summarise(richness=length(Taxon))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=richness)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_rich=(NPK-Control)/Control, Fence_rich=(Fence-Control)/Control, NPKfence_rich=(NPK+Fence-Control)/Control)%>%
+  select(site_code, year_trt, DI, NPK_rich, Fence_rich, NPKfence_rich)%>%
+  gather(key=trt, value=richness_diff, NPK_rich:NPKfence_rich)%>%
+  na.omit()
+
+ggplot(data=barGraphStats(data=nutnetRichnessDI, variable="richness_diff", byFactorNames=c("year_trt", "trt", "DI")), aes(x=year_trt, y=mean, color=DI)) +
+  geom_point(size=5) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment Year') + ylab('Richness Difference (%)') +
+  geom_hline(yintercept=0) +
+  facet_wrap(~trt, scales='free')
+#export at 1200x800
+
+nutnetRichnessAbund <- nutnetPresAbs%>%
+  select(site_code, Taxon, plot, year_trt, trt, rel_cover)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(abund=ifelse(abund_group==1, 'rare', ifelse(abund_group==2, 'int', 'common')))%>%
+  filter(rel_cover>0)%>%
+  group_by(site_code, year_trt, trt, abund)%>%
+  summarise(richness=length(Taxon))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=richness)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_rich=(NPK-Control)/Control, Fence_rich=(Fence-Control)/Control, NPKfence_rich=(NPK+Fence-Control)/Control)%>%
+  select(site_code, year_trt, abund, NPK_rich, Fence_rich, NPKfence_rich)%>%
+  gather(key=trt, value=richness_diff, NPK_rich:NPKfence_rich)%>%
+  na.omit()
+
+ggplot(data=barGraphStats(data=nutnetRichnessAbund, variable="richness_diff", byFactorNames=c("year_trt", "trt", "abund")), aes(x=year_trt, y=mean, color=abund)) +
+  geom_point(size=5) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment Year') + ylab('Richness Difference (%)') +
+  geom_hline(yintercept=0) +
+  facet_wrap(~trt, scales='free')
+#export at 1200x800
+
+
+
+###changes in mean abundances
+#merge groupings with data
+nutnetAbundDI <- nutnetPresAbs%>%
+  select(site_code, Taxon, plot, year_trt, trt, rel_cover)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(DI=ifelse(DI_group==1, 'rare', ifelse(DI_group==2, 'int', 'common')))%>%
+  filter(rel_cover>0)%>%
+  group_by(site_code, year_trt, trt, DI)%>%
+  summarise(mean_abund=mean(rel_cover))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=mean_abund)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_abund=(NPK-Control)/Control, Fence_abund=(Fence-Control)/Control, NPKfence_abund=(NPK+Fence-Control)/Control)%>%
+  select(site_code, year_trt, DI, NPK_abund, Fence_abund, NPKfence_abund)%>%
+  gather(key=trt, value=abund_diff, NPK_abund:NPKfence_abund)%>%
+  na.omit()
+
+ggplot(data=barGraphStats(data=nutnetAbundDI, variable="abund_diff", byFactorNames=c("year_trt", "trt", "DI")), aes(x=year_trt, y=mean, color=DI)) +
+  geom_point(size=5) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment Year') + ylab('Abundance Difference (%)') +
+  geom_hline(yintercept=0) +
+  facet_wrap(~trt, scales='free')
+#export at 1200x800
+
+nutnetAbundAbund <- nutnetPresAbs%>%
+  select(site_code, Taxon, plot, year_trt, trt, rel_cover)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(abund=ifelse(abund_group==1, 'rare', ifelse(abund_group==2, 'int', 'common')))%>%
+  filter(rel_cover>0)%>%
+  group_by(site_code, year_trt, trt, abund)%>%
+  summarise(mean_abund=mean(rel_cover))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=mean_abund)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_abund=(NPK-Control)/Control, Fence_abund=(Fence-Control)/Control, NPKfence_abund=(NPK+Fence-Control)/Control)%>%
+  select(site_code, year_trt, abund, NPK_abund, Fence_abund, NPKfence_abund)%>%
+  gather(key=trt, value=abund_diff, NPK_abund:NPKfence_abund)%>%
+  na.omit()
+
+ggplot(data=barGraphStats(data=nutnetAbundAbund, variable="abund_diff", byFactorNames=c("year_trt", "trt", "abund")), aes(x=year_trt, y=mean, color=abund)) +
+  geom_point(size=5) +
+  stat_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment Year') + ylab('Abundance Difference (%)') +
+  geom_hline(yintercept=0) +
+  facet_wrap(~trt, scales='free')
+#export at 1200x800
+
+
+
+###proportion of years absent
+nutnetAbsentDI <- nutnetdf_allspp3Trt%>%
+  select(site_code, Taxon, plot, trt, yrs_absent, length)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(DI=ifelse(DI_group==1, 'rare', ifelse(DI_group==2, 'int', 'common')))%>%
+  mutate(prop_absent=yrs_absent/length)%>%
+  filter(length>2)%>% #sets dataset length to be at least 3, so we don't have species 100% present or absent based on one year
+  group_by(site_code, trt, DI)%>%
+  summarise(prop_years_absent=mean(prop_absent))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=prop_years_absent)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_absent=(NPK-Control)/Control, Fence_absent=(Fence-Control)/Control, NPKfence_absent=(NPK+Fence-Control)/Control)%>%
+  select(site_code, DI, NPK_absent, Fence_absent, NPKfence_absent)%>%
+  gather(key=trt, value=absent_diff, NPK_absent:NPKfence_absent)%>%
+  na.omit()%>%
+  filter(absent_diff<1000)
+
+ggplot(data=barGraphStats(data=nutnetAbsentDI, variable="absent_diff", byFactorNames=c("trt", "DI")), aes(x=trt, y=mean, color=DI)) +
+  geom_point(size=5) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment') + ylab('Difference in Proportion of Years Absent (%)') +
+  geom_hline(yintercept=0)
+#export at 800x800
+
+
+nutnetAbsentAbund <- nutnetdf_allspp3Trt%>%
+  select(site_code, Taxon, plot, trt, yrs_absent, length)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(abund=ifelse(abund_group==1, 'rare', ifelse(abund_group==2, 'int', 'common')))%>%
+  mutate(prop_absent=yrs_absent/length)%>%
+  filter(length>2)%>% #sets dataset length to be at least 3, so we don't have species 100% present or absent based on one year
+  group_by(site_code, trt, abund)%>%
+  summarise(prop_years_absent=mean(prop_absent))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=prop_years_absent)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_absent=(NPK-Control)/Control, Fence_absent=(Fence-Control)/Control, NPKfence_absent=(NPK+Fence-Control)/Control)%>%
+  select(site_code, abund, NPK_absent, Fence_absent, NPKfence_absent)%>%
+  gather(key=trt, value=absent_diff, NPK_absent:NPKfence_absent)%>%
+  na.omit()%>%
+  filter(absent_diff<1000)
+
+ggplot(data=barGraphStats(data=nutnetAbsentAbund, variable="absent_diff", byFactorNames=c("trt", "abund")), aes(x=trt, y=mean, color=abund)) +
+  geom_point(size=5) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment') + ylab('Difference in Proportion of Years Absent (%)') +
+  geom_hline(yintercept=0)
+#export at 800x800
 
 
 
 
+###cumulative number of years absent
+nutnetConsAbsentDI <- nutnetConsAbs2%>%
+  select(site_code, Taxon, plot, trt, cons_abs_max, length)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(DI=ifelse(DI_group==1, 'rare', ifelse(DI_group==2, 'int', 'common')))%>%
+  mutate(cons_abs=cons_abs_max)%>%
+  filter(length>2)%>% #sets dataset length to be at least 3, so we don't have species 100% present or absent based on one year
+  group_by(site_code, trt, DI)%>%
+  summarise(cons_abs_max=mean(cons_abs))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=cons_abs_max)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_absent=(NPK-Control)/Control, Fence_absent=(Fence-Control)/Control, NPKfence_absent=(NPK+Fence-Control)/Control)%>%
+  select(site_code, DI, NPK_absent, Fence_absent, NPKfence_absent)%>%
+  gather(key=trt, value=absent_diff, NPK_absent:NPKfence_absent)%>%
+  na.omit()%>%
+  filter(absent_diff<1000)
+
+ggplot(data=barGraphStats(data=nutnetConsAbsentDI, variable="absent_diff", byFactorNames=c("trt", "DI")), aes(x=trt, y=mean, color=DI)) +
+  geom_point(size=5) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment') + ylab('Difference in Proportion of Years Absent (%)') +
+  geom_hline(yintercept=0)
+#export at 800x800
 
 
+nutnetConsAbsentAbund <- nutnetConsAbs2%>%
+  select(site_code, Taxon, plot, trt, cons_abs_max, length)%>%
+  left_join(nutnetSppGroups)%>%
+  mutate(abund=ifelse(abund_group==1, 'rare', ifelse(abund_group==2, 'int', 'common')))%>%
+  mutate(cons_abs=cons_abs_max)%>%
+  filter(length>2)%>% #sets dataset length to be at least 3, so we don't have species 100% present or absent based on one year
+  group_by(site_code, trt, abund)%>%
+  summarise(cons_abs_max=mean(cons_abs))%>%
+  ungroup()%>%
+  filter(trt!='NA')%>%
+  spread(key=trt, value=cons_abs_max)%>%
+  select(-N, -P, -K, -NP, -NK, -PK)%>%
+  mutate(NPK_absent=(NPK-Control)/Control, Fence_absent=(Fence-Control)/Control, NPKfence_absent=(NPK+Fence-Control)/Control)%>%
+  select(site_code, abund, NPK_absent, Fence_absent, NPKfence_absent)%>%
+  gather(key=trt, value=absent_diff, NPK_absent:NPKfence_absent)%>%
+  na.omit()%>%
+  filter(absent_diff<1000)
+
+ggplot(data=barGraphStats(data=nutnetConsAbsentAbund, variable="absent_diff", byFactorNames=c("trt", "abund")), aes(x=trt, y=mean, color=abund)) +
+  geom_point(size=5) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+  xlab('Treatment') + ylab('Difference in Proportion of Years Absent (%)') +
+  geom_hline(yintercept=0)
+#export at 800x800
 
 
 
