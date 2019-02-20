@@ -90,3 +90,4 @@ biotime_duo_reshape %>%
   ggplot(aes(x = YEAR, y = log(biomass), color = factor(STUDY_ID))) +
   geom_line() +
   guides(color = "none") 
+ggsave("../figures/biomass_change_over_time.jpg")
