@@ -10,8 +10,14 @@ setwd("~/Google Drive/LTER_Biodiversity_Productivity")
 #kim's wd
 setwd('C:\\Users\\lapie\\Dropbox (Smithsonian)\\nutrient network\\NutNet data')
 
-library(tidyverse)
 library(grid)
+library(lme4)
+library(sjPlot)
+library(merTools)
+library(DHARMa)
+library(car)
+library(AICcmodavg)
+library(tidyverse)
 
 theme_set(theme_bw())
 theme_update(axis.title.x=element_text(size=20, vjust=-0.35, margin=margin(t=15)), axis.text.x=element_text(size=16),
@@ -43,7 +49,7 @@ barGraphStats <- function(data, variable, byFactorNames) {
 
 
 #########
-nutnetdf <-read.csv("full-cover-31-August-2018.csv")
+nutnetdf <-read.csv("full-cover-21-February-2019.csv")
 # 
 # nutnetpretreatdt <- data.table(nutnetpretreatdf)
 # nutnetpretreatdt[, meanPTAbundance:=mean(rel_cover, na.rm=T), .(year, site_code, Taxon)]
@@ -276,7 +282,7 @@ ggplot(nutnet_finalabund2, aes(x=abund_metric, y=final_cover)) +
 
 
 ###bring in biomass (function) component
-biomass <- read.csv('full-biomass-31-August-2018.csv')%>%
+biomass <- read.csv('full-biomass-21-February-2019.csv')%>%
   filter(live==1)%>%
   group_by(site_code, plot, subplot, year_trt)%>%
   summarise(mass2=sum(mass))%>%
@@ -304,7 +310,54 @@ ggplot(biomassSpp, aes(x=importance, y=biomass)) +
 #export at 900x900
 
 
-###figures comparable to Biotime
+###BEF figure (traditional)
+#notes, do we want to just include controls? and only 30 pretrt plots?
+
+richness <- nutnetRel%>%
+  filter(live==1, Family!='NULL')%>%
+  group_by(year_trt, site_code, plot, trt)%>%
+  summarise(richness=length(rel_cover))%>%
+  ungroup()
+
+biomassRichness <- biomass%>%
+  left_join(richness)%>%
+  filter(year_trt!=0)%>%
+  filter(trt=='Control'|trt=='NPK'|trt=='Fence'|trt=='NPK+Fence')%>%
+  mutate(logRich=log10(richness+1), logBio=log10(anpp+1))
+
+
+bef_mod <- lmer(log10(anpp+1) ~ log10(richness+1)*year_trt + (log10(richness+1) | site_code), data=subset(biomassRichness, trt=='Control'))
+
+#evaluate autocor
+biomassRichnessModOut <- biomassRichness%>%
+  ungroup()%>%
+  filter(trt=='Control')%>%
+  mutate(res_bef_mod = residuals(bef_mod))%>%
+  group_by(site_code)%>%
+  mutate(lag_res_bef_mod = lag(res_bef_mod))%>%
+  ungroup()
+
+qplot(lag_res_bef_mod, res_bef_mod, data = biomassRichnessModOut)
+
+pred_bef_fix <- cbind(biomassRichnessModOut,
+                      predictInterval(bef_mod, 
+                                      newdata=biomassRichnessModOut%>%mutate(year_trt=1), 
+                                      which="fixed"))
+pred_bef_ranef <- cbind(biomassRichnessModOut,
+                        predictInterval(bef_mod, newdata=biomassRichnessModOut, 
+                                        which="full"))
+
+BEFstrawmanFig <- ggplot(biomassRichness, aes(x=log10(richness+1), y=log10(anpp+1), color=as.character(site_code))) + 
+  guides(color = "none") +
+  geom_ribbon(pred_bef_fix, mapping=aes(ymin=lwr, ymax=upr), fill="lightgrey", color=NA, alpha=0.6) +
+  geom_smooth(pred_bef_ranef, method='lm', mapping=aes(y=fit), alpha=0.7, lwd=1.3, se=F) +
+  geom_smooth(pred_bef_fix, method='lm', mapping=aes(y=fit), color="black", lwd=1.5) +
+  xlab("Log Richness + 1") + ylab("Log Biomass + 1")
+
+
+
+
+###figures comparable to predicts database
 
 #biomass response by trt
 biomassResp <- biomass%>%
