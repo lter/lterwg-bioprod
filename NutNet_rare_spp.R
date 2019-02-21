@@ -62,7 +62,8 @@ nutnetSum <- nutnetdf%>%
   summarise(total_cover=sum(max_cover))
 nutnetRel <- nutnetdf%>%
   left_join(nutnetSum)%>%
-  mutate(rel_cover=(max_cover/total_cover)*100)
+  mutate(rel_cover=(max_cover/total_cover)*100)%>%
+  filter(live==1)
 
 ## compute mean abundance, max abundance and frequency of each species in the pretreatment data 
 #filter to pretreatment data 
@@ -101,7 +102,7 @@ nutnetdf_allspp <- nutnetRel%>%
 nutnetdf_allspp <- as.data.frame(nutnetdf_allspp)
 
 
-# make a column for presence absence of each species in a plot-year
+###make a column for presence absence of each species in a plot-year
 nutnetdf_allspp$PA = ifelse(nutnetdf_allspp$rel_cover > 0, 1, 0)
 
 nutnetdf_length <- as.data.frame(nutnetdf_allspp)%>%
@@ -115,7 +116,7 @@ nutnetdf_allspp2 <- nutnetdf_allspp%>%
   filter(year_trt>0)%>%
   mutate(year_trt2=paste("yr", year_trt, sep=''))%>%
   select(-year_trt, -trt)%>%
-  group_by(site_code, Taxon, site_name, block, plot, subplot, year_trt2, length)%>% ###there's duplicate entries for some spp; need to fix this some day
+  group_by(site_code, Taxon, site_name, block, plot, subplot, year_trt2, length)%>%
   summarise(PA2=mean(PA))%>%
   ungroup()%>%
   group_by(site_code, Taxon, plot, length)%>%
@@ -138,35 +139,6 @@ nutnetdf_allspp3 <- nutnetdf_allspp2%>%
   filter(length>0)
 
 
-###figures of proportion of years absent for the various abundance metrics
-metricPlot <- ggplot(nutnetdf_allspp3, aes(x=abund_metric, y=yrs_absent, color=length)) +
-  geom_point(alpha=0.1, size=3) +
-  xlab('Pre-Treatment Modified Importance Index') +
-  ylab('Proportion of Years Absent')
-
-freqPlot <- ggplot(nutnetdf_allspp3, aes(x=freq, y=yrs_absent, color=length)) +
-  geom_point(alpha=0.1, size=3) +
-  xlab('Pre-Treatment Frequency') +
-  ylab('Proportion of Years Absent')
-
-avgAbundPlot <- ggplot(nutnetdf_allspp3, aes(x=meanPTAbundance, y=yrs_absent, color=length)) +
-  geom_point(alpha=0.1, size=3) +
-  xlab('Pre-Treatment Mean Abundance') +
-  ylab('Proportion of Years Absent')
-
-maxAbundPlot <- ggplot(nutnetdf_allspp3, aes(x=maxPTAbundance, y=yrs_absent, color=length)) +
-  geom_point(alpha=0.1, size=3) +
-  xlab('Pre-Treatment Max Abundance') +
-  ylab('Proportion of Years Absent')
-
-pushViewport(viewport(layout=grid.layout(2,2)))
-print(metricPlot, vp=viewport(layout.pos.row = 1, layout.pos.col = 1))
-print(freqPlot, vp=viewport(layout.pos.row = 1, layout.pos.col = 2))
-print(avgAbundPlot, vp=viewport(layout.pos.row = 2, layout.pos.col = 1))
-print(maxAbundPlot, vp=viewport(layout.pos.row = 2, layout.pos.col = 2))
-#export at 1800 x 1600
-
-
 #get back trt info
 trt <- nutnetRel%>%
   select(year_trt, site_code, plot, trt)%>%
@@ -176,13 +148,6 @@ trt <- nutnetRel%>%
 
 nutnetdf_allspp3Trt <- nutnetdf_allspp3%>%
   merge(trt, by=c('site_code', 'plot'))
-
-ggplot(data=subset(nutnetdf_allspp3Trt, trt!='NA'), aes(x=abund_metric, y=yrs_absent, color=length)) +
-  geom_point(size=3) +
-  xlab('Pre-Treatment Modified Importance Index') +
-  ylab('Proportion of Years Absent') +
-  facet_wrap(~trt)
-#export at 1200x1200
 
 
 ###count concecutive 0's: how long is a sp lost?
@@ -226,24 +191,14 @@ nutnetConsAbs2 <- nutnetConsAbs%>%
   mutate(abund_metric=((meanPTAbundance/100)+PTfreq)/2)%>%
   merge(nutnetdf_length, by=c('site_code'))
 
-ggplot(subset(nutnetConsAbs2, length==9), aes(x=abund_metric, y=cons_abs_max)) +
-  geom_point(alpha=0.1, size=3) +
-  xlab('Pre-Treatment Modified Importance Index') +
-  ylab('Consecutive Years Absent') +
-  facet_wrap(~trt)
-#export at 1200x1200
-
-# ggplot(subset(nutnetConsAbs2, length==9), aes(x=meanPTAbundance, y=cons_abs_max)) +
-#   geom_point(alpha=0.1) +
-#   xlab('Pre-Treatment Mean Abundance') +
-#   ylab('Consecutive Years Absent') +
+# ggplot(nutnetConsAbs2, aes(x=abund_metric, y=cons_abs_max)) +
+#   geom_point() +
+#   xlab('Pre-Treatment Modified Importance Index') +
+#   ylab('Consecutive Years Absent (max)') +
+#   geom_smooth(method='loess') +
 #   facet_wrap(~trt)
 
-
-
-
-
-###figures for year and pres/absence
+###pres/absence
 nutnetPresAbs <- nutnetdf_allspp%>%
   merge(meanAb_byspecies, by=c('site_code', 'Taxon'))%>%
   merge(max_abund, by=c('site_code', 'Taxon'))%>%
@@ -251,11 +206,68 @@ nutnetPresAbs <- nutnetdf_allspp%>%
   mutate(abund_metric=((meanPTAbundance/100)+PTfreq)/2)%>%
   filter(year_trt>0)
 
-ggplot(nutnetPresAbs, aes(x=abund_metric, y=PA, color=trt)) +
+
+###proportion of years absent
+nutnetPropAbs <- nutnetPresAbs%>%
+  group_by(site_code, Taxon, plot, trt, abund_metric)%>%
+  summarise(years_present=sum(PA))%>%
+  ungroup()%>%
+  left_join(nutnetdf_length)%>%
+  mutate(prop_years_present=years_present/length)%>%
+  mutate(prop_years_absent=1-prop_years_present)%>%
+  filter(prop_years_present>0)
+
+nutnetPropAbsCtl <- nutnetPropAbs%>%
+  filter(trt=='Control')%>%
+  rename(prop_years_absent_ctl=prop_years_absent)%>%
+  select(site_code, Taxon, prop_years_absent_ctl)
+
+nutnetPropAbsDiff <- nutnetPropAbs%>%
+  filter(trt!='Control')%>%
+  left_join(nutnetPropAbsCtl)%>%
+  mutate(prop_years_absent_diff=prop_years_absent-prop_years_absent_ctl)
+
+
+ggplot(nutnetPropAbsDiff, aes(x=abund_metric, y=prop_years_absent_diff)) +
   geom_point() +
   xlab('Pre-Treatment Modified Importance Index') +
-  ylab('Presence (1)/Absence (0)') +
-  facet_wrap(~year_trt)
+  ylab('Proportion Years Absent') +
+  geom_smooth(method='loess') +
+  facet_wrap(~trt)
+
+n <- 100
+newdata <- crossing(abund_metric=seq(0,30,length.out=n), 
+                    site_code = unique(nutnetPropAbs$site_code))
+newdata_fixed <- data.frame(abund_metric=seq(0,30,length.out=n), 
+                            site_code = unique(nutnetPropAbs$site_code)[1])
+
+
+
+#NPK plot model
+modPropAbsentNPK <- glmer(prop_years_absent_diff ~ abund_metric + (1 + abund_metric|site_code),
+                              data = subset(nutnetPropAbsDiff, trt=='NPK'))
+pred_final_loss_fixed <- cbind(newdata_fixed, predictInterval(modPropAbsentNPK,
+                                                              newdata=newdata_fixed,
+                                                              which="fixed", type="probability",
+                                                              include.resid.var = FALSE))
+pred_final_loss_ranef <- cbind(newdata, predictInterval(modPropAbsentNPK,
+                                                        newdata=newdata,
+                                                        which="full", type="probability",
+                                                        include.resid.var = F))
+
+ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=abund_metric, y=prop_years_absent, group=as.character(site_code))) +
+  geom_point(position=position_jitter(width=0.05, height=0.05),
+             alpha=0.2, color="grey") +
+  geom_line(data = pred_final_loss_ranef,
+            mapping=aes(y=fit, group=as.character(site_code)),
+            lwd=0.4, alpha=0.4, color="lightgrey") +
+  geom_line(data = pred_final_loss_fixed,
+            mapping=aes(y=fit),
+            color="black", lwd=1.3) +
+  ylab("Proportion Years Absent") +
+  xlab("Dominance Indicator Index")
+
+
 
 
 
@@ -280,34 +292,6 @@ ggplot(nutnet_finalabund2, aes(x=abund_metric, y=final_cover)) +
 #export at 1200x1200
 
 
-
-###bring in biomass (function) component
-biomass <- read.csv('full-biomass-21-February-2019.csv')%>%
-  filter(live==1)%>%
-  group_by(site_code, plot, subplot, year_trt)%>%
-  summarise(mass2=sum(mass))%>%
-  ungroup()%>%
-  group_by(site_code, plot, year_trt)%>%
-  summarise(anpp=mean(mass2))
-
-hist(biomass$anpp)
-
-biomassSpp <- nutnetdf_allspp%>%
-  filter(rel_cover>0)%>%
-  merge(biomass, by=c('site_code', 'plot', 'year_trt'))%>%
-  merge(meanAb_byspecies, by=c('site_code', 'Taxon'))%>%
-  merge(max_abund, by=c('site_code', 'Taxon'))%>%
-  merge(freq, by=c('site_code', 'Taxon'))%>%
-  mutate(abund_metric=((meanPTAbundance/100)+freq)/2)%>%
-  select(-PTfreq)%>%
-  group_by(site_code, plot, year_trt)%>%
-  summarise(biomass=mean(anpp), importance=mean(abund_metric), min_importance=min(abund_metric))
-
-ggplot(biomassSpp, aes(x=importance, y=biomass)) +
-  geom_point(size=3, alpha=0.1) +
-  xlab('Pre-Treatment Modified Importance Index') +
-  ylab('Aboveground Biomass')
-#export at 900x900
 
 
 ###BEF figure (traditional)
