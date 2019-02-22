@@ -15,7 +15,8 @@ size <- readRDS("../derived_data/5_biotime_abund_biomass_loss.Rds")
 timeseries <- readRDS("../derived_data/6_biomass_timeseries.Rds")
 
 #make the 4 panel plot
-jpeg("../figures/four_panel_plot.jpg")
+jpeg("../figures/four_panel_plot.jpg",
+     width = 1024, height = 768)
 bef$log_biomass_plot +
   rarity$missing_at_end_plot +
   size$plot_fit_loss_mod +
