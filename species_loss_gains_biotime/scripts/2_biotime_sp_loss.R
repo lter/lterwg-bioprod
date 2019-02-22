@@ -371,4 +371,4 @@ saveRDS(list(mod_final_loss = mod_final_loss,
              pred_final_loss_ranef = pred_final_loss_ranef, 
              pred_final_loss_fixed = pred_final_loss_fixed,
              missing_at_end_plot = missing_at_end),
-        file = "../derived_data/2_biotime_sp_loss.R")
+        file = "../derived_data/2_biotime_sp_loss.Rds")
