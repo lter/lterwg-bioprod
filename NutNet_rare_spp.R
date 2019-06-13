@@ -210,7 +210,7 @@ nutnetPresAbs <- nutnetdf_allspp%>%
 
 ###proportion of years absent
 nutnetPropAbs <- nutnetPresAbs%>%
-  group_by(site_code, Taxon, plot, trt, abund_metric)%>%
+  group_by(site_code, Taxon, plot, trt, abund_metric, meanPTAbundance, PTfreq)%>%
   summarise(years_present=sum(PA))%>%
   ungroup()%>%
   left_join(nutnetdf_length)%>%
@@ -237,15 +237,15 @@ ggplot(nutnetPropAbsDiff, aes(x=abund_metric, y=prop_years_absent_diff)) +
   facet_wrap(~trt)
 
 n <- 100
-newdata <- crossing(abund_metric=seq(0,30,length.out=n), 
+newdata <- crossing(meanPTAbundance=seq(0,100,length.out=n), 
                     site_code = unique(nutnetPropAbs$site_code))
-newdata_fixed <- data.frame(abund_metric=seq(0,30,length.out=n), 
+newdata_fixed <- data.frame(meanPTAbundance=seq(0,100,length.out=n), 
                             site_code = unique(nutnetPropAbs$site_code)[1])
 
 
 
 #NPK plot model
-modPropAbsentNPK <- glmer(prop_years_absent_diff ~ abund_metric + (1 + abund_metric|site_code),
+modPropAbsentNPK <- glmer(prop_years_absent_diff ~ meanPTAbundance + (1 + meanPTAbundance|site_code),
                               data = subset(nutnetPropAbsDiff, trt=='NPK'))
 pred_final_loss_fixed <- cbind(newdata_fixed, predictInterval(modPropAbsentNPK,
                                                               newdata=newdata_fixed,
@@ -256,9 +256,8 @@ pred_final_loss_ranef <- cbind(newdata, predictInterval(modPropAbsentNPK,
                                                         which="full", type="probability",
                                                         include.resid.var = F))
 
-ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=abund_metric, y=prop_years_absent, group=as.character(site_code))) +
-  geom_point(position=position_jitter(width=0.05, height=0.05),
-             alpha=0.2, color="grey") +
+ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=meanPTAbundance, y=prop_years_absent, group=as.character(site_code), color=PTfreq)) +
+  geom_point() +
   geom_line(data = pred_final_loss_ranef,
             mapping=aes(y=fit, group=as.character(site_code)),
             lwd=0.4, alpha=0.4, color="lightgrey") +
@@ -266,7 +265,7 @@ ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=abund_metric, y=prop_years_absen
             mapping=aes(y=fit),
             color="black", lwd=1.3) +
   ylab("Proportion Years Absent") +
-  xlab("Dominance Indicator Index")
+  xlab("Pre-Treatment Abundance")
 
 
 
@@ -298,7 +297,8 @@ ggplot(nutnet_finalabund2, aes(x=abund_metric, y=final_cover)) +
 biomass <- read.csv('full-biomass-22-February-2019.csv')%>%
   filter(live==1)%>%
   group_by(site_code, plot, subplot, year_trt)%>%
-  summarise(mass2=sum(mass))%>%
+  summarise(anpp=sum(mass))%>%
+  ungroup()
 
 ###BEF figure (traditional)
 #notes, do we want to just include controls? and only 30 pretrt plots?
