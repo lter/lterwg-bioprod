@@ -8,6 +8,7 @@ rm(list=ls())
 setwd("~/Google Drive/LTER_Biodiversity_Productivity")
 
 #kim's wd
+setwd('C:\\Users\\la pierrek\\Dropbox (Smithsonian)\\nutrient network\\NutNet data')
 setwd('C:\\Users\\lapie\\Dropbox (Smithsonian)\\nutrient network\\NutNet data')
 
 library(tidyverse)
@@ -43,7 +44,7 @@ barGraphStats <- function(data, variable, byFactorNames) {
 
 
 #########
-nutnetdf <-read.csv("full-cover-31-August-2018.csv")
+nutnetdf <-read.csv("full-cover-22-February-2019.csv")
 # 
 # nutnetpretreatdt <- data.table(nutnetpretreatdf)
 # nutnetpretreatdt[, meanPTAbundance:=mean(rel_cover, na.rm=T), .(year, site_code, Taxon)]
@@ -276,7 +277,7 @@ ggplot(nutnet_finalabund2, aes(x=abund_metric, y=final_cover)) +
 
 
 ###bring in biomass (function) component
-biomass <- read.csv('full-biomass-31-August-2018.csv')%>%
+biomass <- read.csv('full-biomass-22-February-2019.csv')%>%
   filter(live==1)%>%
   group_by(site_code, plot, subplot, year_trt)%>%
   summarise(mass2=sum(mass))%>%
@@ -378,7 +379,8 @@ nutnetRichnessDI <- nutnetPresAbs%>%
   mutate(NPK_rich=(NPK-Control)/Control, Fence_rich=(Fence-Control)/Control, NPKfence_rich=(NPK+Fence-Control)/Control)%>%
   select(site_code, year_trt, DI, NPK_rich, Fence_rich, NPKfence_rich)%>%
   gather(key=trt, value=richness_diff, NPK_rich:NPKfence_rich)%>%
-  na.omit()
+  na.omit()%>%
+  filter(year_trt!=999999)
 
 ggplot(data=barGraphStats(data=nutnetRichnessDI, variable="richness_diff", byFactorNames=c("year_trt", "trt", "DI")), aes(x=year_trt, y=mean, color=DI)) +
   geom_point(size=5) +
@@ -403,7 +405,8 @@ nutnetRichnessAbund <- nutnetPresAbs%>%
   mutate(NPK_rich=(NPK-Control)/Control, Fence_rich=(Fence-Control)/Control, NPKfence_rich=(NPK+Fence-Control)/Control)%>%
   select(site_code, year_trt, abund, NPK_rich, Fence_rich, NPKfence_rich)%>%
   gather(key=trt, value=richness_diff, NPK_rich:NPKfence_rich)%>%
-  na.omit()
+  na.omit()%>%
+  filter(year_trt!=999999)
 
 ggplot(data=barGraphStats(data=nutnetRichnessAbund, variable="richness_diff", byFactorNames=c("year_trt", "trt", "abund")), aes(x=year_trt, y=mean, color=abund)) +
   geom_point(size=5) +
@@ -432,7 +435,8 @@ nutnetAbundDI <- nutnetPresAbs%>%
   mutate(NPK_abund=(NPK-Control)/Control, Fence_abund=(Fence-Control)/Control, NPKfence_abund=(NPK+Fence-Control)/Control)%>%
   select(site_code, year_trt, DI, NPK_abund, Fence_abund, NPKfence_abund)%>%
   gather(key=trt, value=abund_diff, NPK_abund:NPKfence_abund)%>%
-  na.omit()
+  na.omit()%>%
+  filter(year_trt!=999999)
 
 ggplot(data=barGraphStats(data=nutnetAbundDI, variable="abund_diff", byFactorNames=c("year_trt", "trt", "DI")), aes(x=year_trt, y=mean, color=DI)) +
   geom_point(size=5) +
@@ -457,7 +461,8 @@ nutnetAbundAbund <- nutnetPresAbs%>%
   mutate(NPK_abund=(NPK-Control)/Control, Fence_abund=(Fence-Control)/Control, NPKfence_abund=(NPK+Fence-Control)/Control)%>%
   select(site_code, year_trt, abund, NPK_abund, Fence_abund, NPKfence_abund)%>%
   gather(key=trt, value=abund_diff, NPK_abund:NPKfence_abund)%>%
-  na.omit()
+  na.omit()%>%
+  filter(year_trt!=999999)
 
 ggplot(data=barGraphStats(data=nutnetAbundAbund, variable="abund_diff", byFactorNames=c("year_trt", "trt", "abund")), aes(x=year_trt, y=mean, color=abund)) +
   geom_point(size=5) +
