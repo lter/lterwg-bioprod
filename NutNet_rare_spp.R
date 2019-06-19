@@ -245,8 +245,8 @@ newdata_fixed <- data.frame(meanPTAbundance=seq(0,100,length.out=n),
 
 
 #NPK plot model
-modPropAbsentNPK <- glmer(prop_years_absent_diff ~ meanPTAbundance + (1 + meanPTAbundance|site_code),
-                              data = subset(nutnetPropAbsDiff, trt=='NPK'))
+modPropAbsentNPK <- glmer(prop_years_absent_diff ~ meanPTAbundance + (1 + as.factor(plot)|site_code),
+                          data = subset(nutnetPropAbsDiff, trt=='NPK'))
 pred_final_loss_fixed <- cbind(newdata_fixed, predictInterval(modPropAbsentNPK,
                                                               newdata=newdata_fixed,
                                                               which="fixed", type="probability",
@@ -267,7 +267,9 @@ ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=meanPTAbundance, y=prop_years_ab
   ylab("Proportion Years Absent") +
   xlab("Pre-Treatment Abundance")
 
-
+#linear model
+summary(modPropAbsentNPK <- glm(prop_years_absent_diff ~ meanPTAbundance,
+                          data = subset(nutnetPropAbsDiff, trt=='NPK')))
 
 
 
