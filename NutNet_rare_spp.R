@@ -50,7 +50,7 @@ barGraphStats <- function(data, variable, byFactorNames) {
 
 
 #########
-nutnetdf <-read.csv("full-cover-22-February-2019.csv")
+nutnetdf <-read.csv("full-cover-02-August-2019.csv")
 # 
 # nutnetpretreatdt <- data.table(nutnetpretreatdf)
 # nutnetpretreatdt[, meanPTAbundance:=mean(rel_cover, na.rm=T), .(year, site_code, Taxon)]
