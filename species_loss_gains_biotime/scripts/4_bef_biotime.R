@@ -21,10 +21,10 @@ library(AICcmodavg)
 
 #### Set some graphical parameters
 
- theme_set(theme_bw(base_size=17))# +
-#             theme(panel.grid.major = element_blank(),
-#                   panel.grid.minor = element_blank(), 
-#                   axis.line = element_line(colour = "black")))
+theme_set(theme_bw(base_size=17) +
+            theme(panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(), 
+                  axis.line = element_line(colour = "black")))
 
 #for a labeller
 add_year <- function(x) paste(x,"years", sep=" ")
@@ -96,17 +96,13 @@ pred_bef_ranef <- cbind(biotime_biomass,
                       predictInterval(bef_mod, newdata=biotime_biomass, 
                                       which="full"))
 
-### key plot - log biomass by log richness ####
-log_biomass_plot <- ggplot(biotime_biomass, aes(x=log(S+1), y=log(B+1), color=as.character(STUDY_ID))) + 
-  geom_point(alpha=0.3) + 
+ggplot(biotime_biomass, aes(x=log(S+1), y=log(B+1), color=as.character(STUDY_ID))) + 
+  geom_point() + 
   guides(color = "none") +
   geom_ribbon(pred_bef_fix, mapping=aes(ymin=lwr, ymax=upr), fill="lightgrey", color=NA, alpha=0.8) +
-  geom_line(pred_bef_ranef, mapping=aes(y=fit), alpha=0.5, lwd=1.3) +
+  geom_line(pred_bef_ranef, mapping=aes(y=fit), alpha=0.7, lwd=1.3) +
   geom_line(pred_bef_fix, mapping=aes(y=fit), color="black", lwd=1.5) +
-  xlab("Log Species Richness + 1") + ylab("Log Total Biomass + 1")
-
-log_biomass_plot
-ggsave("../figures/log_biomass_log_richness.jpg")
+  xlab("Log Richness + 1") + ylab("Log Biomass + 1")
 
 
 ####---------
@@ -131,19 +127,15 @@ pred_lr_ranef <- cbind(biotime_biomass,
                         predictInterval(change_mod, newdata=biotime_biomass, 
                                         which="full"))
 
-### key plot - log ratio change ####
-
-change_plot <- ggplot(biotime_biomass, aes(x=LRDS, y=LRDB, color=as.character(STUDY_ID))) + 
-  geom_point(alpha=0.4) + 
+ggplot(biotime_biomass, aes(x=LRDS, y=LRDB, color=as.character(STUDY_ID))) + 
+  geom_point() + 
   guides(color = "none") +
   geom_ribbon(pred_lr_fix, mapping=aes(ymin=lwr, ymax=upr), fill="lightgrey", color=NA, alpha=0.8) +
   geom_line(pred_lr_ranef, mapping=aes(y=fit), alpha=0.5, lwd=0.9) +
   geom_line(pred_lr_fix, mapping=aes(y=fit), color="black", lwd=1.5)+
   xlab("Log Ratio of Richness Change\nLog(S(t)/S(t-1) +1)")+
   ylab("Log Ratio of Biomass Change\nLog(B(t)/B(t-1) +1)")
-change_plot
 
-ggsave("../figures/log_ratio_change.jpg")
 
 #-------------
 # Slope versus CV? From bef_mod
@@ -160,11 +152,3 @@ ggplot(biotime_biomass_cv, aes(x=slope, y=CV_B)) +
   stat_smooth(method="lm") +
   xlab("Individual Study BLUP of\nSlope Random Effect") +
   ylab("Temporal Coefficient of Variation\nin Biomass")
-
-
-### write some things out
-saveRDS(list(bef_mod = bef_mod,
-             pred_bef_fix = pred_bef_fix,
-             pred_bef_ranef = pred_bef_ranef,
-             log_biomass_plot = log_biomass_plot),
-        file = "../derived_data/4_bef_biotime.Rds")
