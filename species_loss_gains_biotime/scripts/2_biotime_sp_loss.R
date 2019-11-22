@@ -31,7 +31,7 @@ theme_set(theme_bw(base_size=17) +
 add_year <- function(x) paste(x,"years", sep=" ")
 
 #### Load data ####
-load(file="../derived_data/biotime_loss_summary_filtered.Rdata")
+load(file="../derived_data/biotime_loss_summary.Rdata")
 
 load(file="../derived_data/biotime_sum_abund.Rdata")
 
@@ -110,7 +110,7 @@ pred_final_loss_ranef <- cbind(newdata, predictInterval(mod_final_loss,
 
 #replot with raw data and model predictions
 jpeg("../figures/effect_of_rarity_on_final_loss.jpg")
-ggplot(biotime_loss_summary_filtered,
+missing_at_end <- ggplot(biotime_loss_summary_filtered,
        aes(x=REL_RANK_T0, y=lost_at_end, group=as.character(STUDY_ID))) +
   geom_point(position=position_jitter(width=0.05, height=0.05),
              alpha=0.2, color="grey") +
@@ -121,8 +121,8 @@ ggplot(biotime_loss_summary_filtered,
               mapping=aes(y=fit),
               color="black", lwd=1.3) +
   ylab("Probability of Being\n Missing at End") +
-  xlab("Relative Rank at 1st Time Step\n
-       (Rare to Common)")
+  xlab("Relative Rank at 1st Time Step\n(Rare to Common)")
+missing_at_end
 dev.off()
 
 #---------------------------------------------------------------------------------------
@@ -364,3 +364,11 @@ ggplot(frac_time_fixed) +
   scale_color_discrete(guide = guide_legend(title = "Duration of\nTimeseries"))+
   scale_fill_discrete(guide = guide_legend(title = "Duration of\nTimeseries"))
 dev.off()
+
+
+## Save some things regarding prob of missing at end
+saveRDS(list(mod_final_loss = mod_final_loss,
+             pred_final_loss_ranef = pred_final_loss_ranef, 
+             pred_final_loss_fixed = pred_final_loss_fixed,
+             missing_at_end_plot = missing_at_end),
+        file = "../derived_data/2_biotime_sp_loss.Rds")
