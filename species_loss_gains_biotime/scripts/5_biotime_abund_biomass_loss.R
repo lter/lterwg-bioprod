@@ -90,26 +90,6 @@ ggplot(biotime_duo_reshape,
 ggsave("../figures/biotime_log_abund_biomass.jpg")
 
 
-#biomass timeseries
-biomass_tseries <- biotime_duo_reshape %>%
-  group_by(STUDY_ID, YEAR) %>%
-  summarize(biomass = sum(Biomass))
-
-ggplot(biomass_tseries,
-       aes(x = YEAR, y = log(biomass), color = factor(STUDY_ID))) +
-  geom_line() +
-  guides(color = "none") 
-ggsave("../figures/biomass_change_over_time.jpg")
-
-
-ggplot(biomass_tseries,
-       aes(x = YEAR, y = log(biomass), color = factor(STUDY_ID))) +
-  geom_point(alpha = 0.5) +
-  guides(color = "none") +
-  stat_smooth(method = "lm", fill = NA)
-ggsave("../figures/biomass_change_trends_over_time.jpg")
-
-
 #plot abundance rank by biomass rank 
 ggplot(biotime_duo_reshape, 
        mapping = aes(x = rel_abund_rank, y = rel_biomass_rank, color = factor(STUDY_ID))) +
