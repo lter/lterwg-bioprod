@@ -1,0 +1,367 @@
+---
+title: "Merged Nutnet Plots"
+author: "Nathan Hwangbo"
+date: "12/6/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Reading in Data
+* Removed the site `comp.pt`
+* filtered for `live ==1`
+* computed relative cover as $\frac{\text{max cover}}{\text{totplotcover.yr.live} \times 100}$
+```{r, warning=FALSE, message=FALSE, cache = T}
+library(tidyverse)
+library(ggplot2)
+library(here)
+
+
+## Reading in data
+nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
+  # for Doane College Spring Creek Prarie, there's an extra space
+  mutate(site_name.y = str_trim(site_name.y))
+
+# Getting rid of identical, duplicate columns
+# removing problematic site code comp.pt
+nutnetdf <- nutnetdf_raw %>%
+  select(-c(block.y, site_name.y, trt.y,  year_trt.y)) %>%
+  rename(block = "block.x", site_name = "site_name.x", trt= "trt.x", year_trt = "year_trt.x") %>%
+  # removing site_code == "comp.pt" is hack for getting the year_trts to line up
+  filter(site_code !="comp.pt")
+
+
+# The plots will focus on live biomass, so this will be our base dataset.
+nutnetRel <- nutnetdf %>%
+  filter(live == 1) %>%
+  mutate(rel_cover = (max_cover/totplotcover.yr.live )*100) 
+
+# this will come in handy when we're actually plotting the data.
+nutnetPlot <- nutnetRel %>%
+  filter(trt %in% c("Control", "Fence", "N", "NP", "NPK", "Fence"))
+```
+
+### Setup code borrowed from `nutnet_rare_spp.R`
+```{r}
+
+# making the plots pretty
+theme_set(theme_bw())
+theme_update(axis.title.x=element_text(size=20, vjust=-0.35, margin=margin(t=15)), axis.text.x=element_text(size=16),
+             axis.title.y=element_text(size=20, angle=90, vjust=0.5, margin=margin(r=15)), axis.text.y=element_text(size=16),
+             plot.title = element_text(size=24, vjust=2),
+             panel.grid.major=element_blank(), panel.grid.minor=element_blank(),
+             legend.title=element_blank(), legend.text=element_text(size=20))
+
+
+### Helper Functions
+barGraphStats <- function(data, variable, byFactorNames) {
+  count <- length(byFactorNames)
+  N <- aggregate(data[[variable]], data[byFactorNames], FUN=length)
+  names(N)[1:count] <- byFactorNames
+  names(N) <- sub("^x$", "N", names(N))
+  mean <- aggregate(data[[variable]], data[byFactorNames], FUN=mean)
+  names(mean)[1:count] <- byFactorNames
+  names(mean) <- sub("^x$", "mean", names(mean))
+  sd <- aggregate(data[[variable]], data[byFactorNames], FUN=sd)
+  names(sd)[1:count] <- byFactorNames
+  names(sd) <- sub("^x$", "sd", names(sd))
+  preSummaryStats <- merge(N, mean, by=byFactorNames)
+  finalSummaryStats <- merge(preSummaryStats, sd, by=byFactorNames)
+  finalSummaryStats$se <- finalSummaryStats$sd / sqrt(finalSummaryStats$N)
+  return(finalSummaryStats)
+}  
+
+
+###count concecutive 0's: how long is a sp lost?
+cumul_zeros <- function(x)  {
+  x <- !x
+  rl <- rle(x)
+  len <- rl$lengths
+  v <- rl$values
+  cumLen <- cumsum(len)
+  z <- x
+  # replace the 0 at the end of each zero-block in z by the 
+  # negative of the length of the preceding 1-block....
+  iDrops <- c(0, diff(v)) < 0
+  z[ cumLen[ iDrops ] ] <- -len[ c(iDrops[-1],FALSE) ]
+  # ... to ensure that the cumsum below does the right thing.
+  # We zap the cumsum with x so only the cumsums for the 1-blocks survive:
+  x*cumsum(z)
+}
+
+```
+
+
+
+
+### Biotime plot 1: Biomass ~ Richness (log scale). 
+* Using `rich` for richness
+* using `live_mass` for biomass
+```{r }
+# locally linear trendlines
+(biotime_plot1_loess <- ggplot(nutnetPlot, aes(x=log(rich), y=log(live_mass), color=trt)) + 
+    #guides(color = "none") +
+    geom_point(alpha = 0.01) +
+    geom_smooth(method='loess', alpha=0.7, lwd=1.3, se=T) +
+    #geom_smooth(pred_bef_fix, method='lm', mapping=aes(y=fit), color="black", lwd=1.5) +
+    labs(x = "Log Richness",
+         y = "Log Biomass",
+         title = "Biomass vs Richness by Treatment (LOESS Trendlines)") + 
+    ylim(c(4,6.5))
+)
+
+# linear trendlines
+(biotime_plot1_lm <- ggplot(nutnetPlot, aes(x=log(rich), y=log(live_mass), color=trt)) + 
+    #guides(color = "none") +
+    geom_point(alpha = 0.01) +
+    geom_smooth(method='lm', alpha=0.7, lwd=1.3, se=T) +
+    #geom_smooth(pred_bef_fix, method='lm', mapping=aes(y=fit), color="black", lwd=1.5) +
+    labs(x = "Log Richness",
+         y = "Log Biomass",
+         title = "Biomass vs Richness by Treatment (LOESS Trendlines)") + 
+    ylim(c(4,6.5))
+)
+
+```
+
+### Plot2 from `nutnet_rare_spp.R`: Proportion of Species lost, by time
+
+* Needs a lot of preprocessing work from Kim's script. This is confusing, and I'm pretty sure we can cut it down somehow
+```{r}
+nutnetpretreatdf <- nutnetRel %>%
+  filter(year_trt == 0)
+
+# Add mean and max abundance, based on year/site_code/taxon
+meanmaxAb_byspecies <- nutnetpretreatdf %>%
+  group_by(year, site_code, Taxon) %>%
+  summarize(meanPTAbundance = mean(rel_cover, na.rm = T),
+            maxPTAbundance = max(rel_cover)) %>%
+  ungroup() %>%
+  select(-year)
+
+nutnetpretreatdf_live <- nutnetpretreatdf %>%
+  filter(live == 1)
+
+# Get the relative pretreatment frequency of each taxon, by year/site_code
+# We first compute Total pretreatment Frequency by summing the live column (1)
+# Then we get the number of plots for each site by taking max(plot) (2)
+# Then we divide total frequency / number of plots (3)
+tot_plots <- nutnetpretreatdf_live%>% #(2)
+  select(site_code, plot)%>%
+  unique()%>%
+  group_by(site_code)%>%
+  summarise(num_plots=max(plot))
+
+freq <- nutnetpretreatdf_live %>%
+  group_by(year, site_code, Taxon) %>%
+  summarize(PTfreq = sum(live, na.rm = T)) %>% # (1)
+  ungroup() %>%
+  select(-year) %>%
+  left_join(tot_plots, by = "site_code") %>%
+  mutate(freq = PTfreq / num_plots) # (3)
+
+nutnetdf_allspp <- nutnetRel %>%
+  select(year, site_name, site_code, block, plot, subplot, year_trt, trt, Taxon, rel_cover) %>%
+  group_by(site_name, site_code) %>%
+  nest() %>% # (1)
+  mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>%
+                                  gather(key = Taxon, value = rel_cover, -year:-trt))) %>% #(2)
+  unnest(spread_df) %>%
+  ungroup() %>%
+  mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # (3)
+  arrange(site_code, plot, Taxon, year)
+
+# get number of years observed. will be merged in with other stuff below
+nutnetdf_length <- nutnetdf_allspp%>%
+  #make a column for max trt year
+  group_by(site_code)%>%
+  summarise(length=max(year_trt))
+
+#get the abundance metric to merge with everything else later (NH CHANGE)
+# abund_metric_df <- nutnetdf_allspp3Trt %>%
+#   select(site_code, Taxon, meanPTAbundance, abund_metric) %>%
+#   distinct()
+
+# get the digroup to merge in with everything else later
+di_groups <- nutnetRel %>%
+  select(site_code, Taxon,DIgroup) %>%
+  distinct()
+
+
+nutnetPresAbs <- nutnetdf_allspp%>%
+  left_join(meanmaxAb_byspecies, by=c('site_code', 'Taxon'))%>%
+  left_join(freq, by=c('site_code', 'Taxon'))%>%
+  mutate(abund_metric=((meanPTAbundance/100)+PTfreq)/2)%>%
+  filter(year_trt>0)
+
+nutnetPASite <- nutnetPresAbs%>%
+  #get site level presence/absence by trt
+  group_by(site_code, Taxon, year_trt, trt)%>%
+  summarise(presence=sum(PA))%>%
+  ungroup()%>%
+  mutate(PA=ifelse(presence>0, 1, 0))
+
+# Look at controls
+nutnetPACtl <- nutnetPASite%>%
+  filter(trt=='Control')%>%
+  rename(PA_ctl=PA)%>%
+  select(site_code, Taxon, year_trt, PA_ctl)
+
+# look at treatment group and compare with controls
+nutnetPASiteTrt <- nutnetPASite%>%
+  filter(trt!='Control')%>%
+  left_join(nutnetPACtl)%>%
+  #drop species that are never present in control in a year (because those are gains in trts)
+  filter(PA_ctl>0)%>%
+  #merge dominance categories NH CHANGE from in-script di computation.
+  # note that we're missing abund metric now, so have to add it separate
+  left_join(di_groups, by = c("site_code", "Taxon"))# %>%
+  #left_join(abund_metric_df, by = c("site_code", "Taxon"))
+
+nutnetLossSite <- nutnetPASiteTrt%>%
+  filter(PA==0)%>%
+  group_by(site_code, year_trt, trt, DIgroup)%>%
+  summarise(num_loss=length(PA))%>%
+  ungroup()
+
+# Looking at number of rows where species is present
+nutnetNotLossSite <- nutnetPASiteTrt%>%
+  filter(PA==1)%>%
+  group_by(site_code, year_trt, trt, DIgroup)%>%
+  summarise(num_notloss=length(PA))%>%
+  ungroup()
+
+# Getting the proportion of species lost in each row ?
+nutnetLossorNotSite <- nutnetLossSite%>%
+  full_join(nutnetNotLossSite)%>%
+  mutate(num_loss=replace_na(num_loss, 0))%>%
+  mutate(num_notloss=replace_na(num_notloss, 0))%>%
+  mutate(total_spp=num_loss+num_notloss)%>%
+  mutate(prop_loss=num_loss/total_spp)%>%
+  #remove sites with no DI groups (no pretrt data)
+  filter(!is.na(DIgroup))%>%
+  #remove sites where trt year is not recorded
+  filter(year_trt<11)
+
+
+ggplot(barGraphStats(data=subset(nutnetLossorNotSite, 
+                                 trt=='N'|trt=='NP'|trt=='NPK' | trt =="Fence"), 
+                     variable="prop_loss", 
+                     byFactorNames=c("trt", "DIgroup", "year_trt")), 
+       aes(x=year_trt, y=mean, color=as.factor(DIgroup))) +
+  geom_point(stat='identity', position=position_dodge(width=0.7)) +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, position=position_dodge(width=0.7)) +
+  xlab('Year') + ylab('Proportion of Species Lost') +
+  #scale_color_discrete(breaks=c("1", "2", "3"), labels=c("Rare", "Intermediate", "Dominant")) +
+  facet_wrap(~trt)
+
+
+```
+
+
+### Plot 3 from `nutnet_rare_spp.R`: Biomass/abudance difference over time
+* The original script had `NP_diff=(NP+Fence-Control)/Control`, as commented out below. Check if this is correct.
+```{r}
+biomassResp <- nutnetRel %>%
+  filter(year_trt!=0)%>%
+  group_by(site_code, year_trt, trt)%>%
+  summarise(live_mass_mean=mean(live_mass))%>%
+  ungroup()%>%
+  spread(key=trt, value=live_mass_mean)%>%
+  mutate(NPK_diff=(NPK-Control)/Control, 
+         N_diff=(N-Control)/Control, 
+         NP_diff=(NP-Control)/Control,
+         #NP_diff=(NP+Fence-Control)/Control,
+         Fence_diff = (Fence - Control)/Control)%>%
+  select(site_code, year_trt, NPK_diff, N_diff, NP_diff, Fence_diff)%>%
+  na.omit()%>%
+  gather(key=trt, value=diff, NPK_diff:Fence_diff)
+
+(badBiomassFig <- ggplot(data=barGraphStats(data=biomassResp, variable="diff", byFactorNames=c("year_trt", "trt")), aes(x=year_trt, y=mean, color=trt)) +
+    geom_point(size=5) +
+    stat_smooth(method = "lm", formula = y ~ x + I(x^2)) +
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+    xlab('Treatment Year') + ylab('Biomass Difference (%)') +
+    geom_hline(yintercept=0)
+  
+)
+
+
+
+```
+
+
+
+### Plot b from Predict: Richness Difference (%) by DIGroup
+* The boxplots are over all sites, and we're averaging over all years != 0
+* Need to check computation of these. Based on the plot above to compute difference 
+```{r}
+## What's are the points in the boxplot??  I chose site_code. maybe trt_year is better?
+richness_diff_di <- nutnetRel %>%
+  filter(year_trt!=0)%>%
+  group_by(trt, site_code, DIgroup)%>%
+  summarise(live_rich_mean=mean(rich))%>%
+  ungroup()%>%
+  spread(key=trt, value=live_rich_mean)%>%
+  mutate(NPK_diff=(NPK-Control)/Control, 
+         N_diff=(N-Control)/Control, 
+         NP_diff=(NP-Control)/Control,
+         #NP_diff=(NP+Fence-Control)/Control,
+         Fence_diff = (Fence - Control)/Control)%>%
+  select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff)%>%
+  na.omit()%>%
+  gather(key=trt, value=diff, NPK:Fence)
+
+
+ggplot(richness_diff_di) + 
+  geom_boxplot(aes(x = trt, y = diff, fill = DIgroup)) + 
+  geom_hline(yintercept = 0) + 
+  lims(y = c(-1,2)) + 
+  labs(title = "Richness by Treatment, over all Sites",
+       y = "Richness Difference (%)",
+       x = "Treatment")
+
+```
+
+
+### Plot c from Predict. Abundance Diff (%) by DI Group
+```{r}
+abund_diff_di <- nutnetRel %>%
+  filter(year_trt!=0)%>%
+  group_by(trt, site_code, DIgroup)%>%
+  summarise(live_abund_mean=mean(DI))%>%
+  ungroup()%>%
+  spread(key=trt, value=live_abund_mean)%>%
+  mutate(NPK_diff=(NPK-Control)/Control, 
+         N_diff=(N-Control)/Control, 
+         NP_diff=(NP-Control)/Control,
+         #NP_diff=(NP+Fence-Control)/Control,
+         Fence_diff = (Fence - Control)/Control)%>%
+  select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff)%>%
+  na.omit()%>%
+  gather(key=trt, value=diff, NPK:Fence)
+
+ggplot(abund_diff_di) + 
+  geom_boxplot(aes(x = trt, y = diff, fill = DIgroup)) + 
+  geom_hline(yintercept = 0) + 
+  lims(y = c(-1,2)) + 
+  labs(title = "Abundance by Treatment, over all Sites",
+       y = "Abundance Difference (%)",
+       x = "Treatment")
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
