@@ -14,6 +14,8 @@ knitr::opts_chunk$set(echo = TRUE)
 * Removed the site `comp.pt`
 * filtered for `live ==1`
 * computed relative cover as $\frac{\text{max cover}}{\text{totplotcover.yr.live} \times 100}$
+
+_Note:_ The new data Laura sent us (as of 12/12/19) is missing all of the treatments. The code will run using the original merged data provided to us (we have it named `merged_NutNet_Oct2019_old.csv`).
 ```{r data, warning=FALSE, message=FALSE, cache = T}
 library(tidyverse)
 library(ggplot2)
@@ -21,7 +23,7 @@ library(here)
 
 
 ## Reading in data
-nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
+nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019_old.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
   # for Doane College Spring Creek Prarie, there's an extra space
   mutate(site_name.y = str_trim(site_name.y))
 
@@ -30,7 +32,6 @@ nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019.csv"), string
 nutnetdf <- nutnetdf_raw %>%
   select(-c(block.y, site_name.y, trt.y,  year_trt.y)) %>%
   rename(block = "block.x", site_name = "site_name.x", trt= "trt.x", year_trt = "year_trt.x") %>%
-  # removing site_code == "comp.pt" is hack for getting the year_trts to line up
   filter(site_code !="comp.pt")
 
 
@@ -42,13 +43,13 @@ nutnetRel <- nutnetdf %>%
 
 # this will come in handy when we're actually plotting the data.
 nutnetPlot <- nutnetRel %>%
-  filter(trt %in% c("Control", "Fence", "N", "NP", "NPK", "Fence"))
+  filter(trt %in% c("Control", "Fence", "N", "NP", "NPK", "Fence", "NPK+Fence"))
 ```
 
 ### Setup code borrowed from `nutnet_rare_spp.R`
 ```{r helpers}
 
-# making the plots pretty
+# plot settings
 theme_set(theme_bw())
 theme_update(axis.title.x=element_text(size=20, vjust=-0.35, margin=margin(t=15)), axis.text.x=element_text(size=16),
              axis.title.y=element_text(size=20, angle=90, vjust=0.5, margin=margin(r=15)), axis.text.y=element_text(size=16),
@@ -57,7 +58,7 @@ theme_update(axis.title.x=element_text(size=20, vjust=-0.35, margin=margin(t=15)
              legend.title=element_blank(), legend.text=element_text(size=20))
 
 
-### Helper Functions
+### Helper Function: Compute a bunch of summary statistics for plotting
 barGraphStats <- function(data, variable, byFactorNames) {
   count <- length(byFactorNames)
   N <- aggregate(data[[variable]], data[byFactorNames], FUN=length)
@@ -99,7 +100,11 @@ cumul_zeros <- function(x)  {
 
 
 ### Aside: How to compute Richness?
-Currently, we use the `Rich` column given to us by nutnet (In particular, the dataset `comb-by-plot-clim-soil-diversity-09-Apr-2018.csv`). However, in `NutNet_rare_spp.R`, richness is computed, using the `full-biomass-09-June-2017.csv` data. In the code chunk below, we use the merged data (`merged_NutNet_Oct2019.csv`), compute richness using the method outlined in `NutNet_rare_spp.R`, and compare it to the built in `rich` column.
+Currently, we use the `Rich` column given to us by nutnet (In particular, the dataset `comb-by-plot-clim-soil-diversity-09-Apr-2018.csv`). However, in `NutNet_rare_spp.R`, richness is computed using the `full-biomass-09-June-2017.csv` data. In the code chunk below, we use the merged data (`merged_NutNet_Oct2019.csv`), compute richness using the original method outlined in `NutNet_rare_spp.R`, tweak this method by changing the `group_by`, and compare these two methods to the built in `rich` column.
+
+* Neither method for computing richness aligns with `rich`.
+    * Q: How is `rich` computed then?
+* The rest of the analysis uses the column `rich`
 ```{r}
 ##### Kim's raw version (from NutNet_rare_spp.R). Nathan's only change is moving to the merged data.
 richness_raw <- nutnetRel%>%
@@ -108,19 +113,19 @@ richness_raw <- nutnetRel%>%
   summarise(richness_og =length(rel_cover))%>%
   ungroup()
 
-#### Adapted version, counting unique taxon instead of rows, don't group by plot
+#### Adapted (computed) version, counting unique taxon instead of rows, don't group by plot
 richness_taxon <- nutnetRel%>%
   filter(live==1, Family!='NULL')%>%
-  group_by(year_trt, site_code,  trt)%>%
+  group_by(year_trt, site_code)%>%
   summarise(richness_adapt=length(unique(Taxon)))%>%
   ungroup()
 
 
-#### Compare with the nutnet built in version.
+#### Compare with the nutnet built in version. They still don't match
 nutnetRel %>%
   select(year_trt, site_code, plot, trt, rich) %>%
   inner_join(richness_raw, by = c("year_trt", "site_code", "plot", "trt")) %>%
-  inner_join(richness_taxon, by = c("year_trt", "site_code", "trt")) %>%
+  inner_join(richness_taxon, by = c("year_trt", "site_code")) %>%
   filter(richness_og != rich | richness_adapt != rich | richness_og != richness_adapt)
   #filter(!isTRUE(all.equal(rich, richness_og, richness_adapt)))
 
@@ -132,10 +137,22 @@ nutnetRel %>%
 
 ### Plot 1 from `nutnet_rare_spp.R`: Biomass ~ Richness (log scale). 
 * Using `rich` for richness
-* using `live_mass` for biomass
+* Using `live_mass` for biomass
+* Plotting linear and locally linear trendlines
+* Including only the treatments :Control, N, NP, NPK, Fence, NPK+Fence
+* We take the average richness/live mass over all Taxon
+    * Equivalently, this means each point in our plot is a unique site / year / treatment / plot combination
+    * Q: Is this what we want?
 ```{r slide4, cache = T}
+# aggregate over taxon
+biomass_by_trt <- nutnetPlot %>%
+  filter(year_trt != 0) %>%
+  group_by(site_code, year_trt, trt, plot) %>% 
+  summarize(mean_rich = mean(rich),
+            mean_mass = mean(live_mass))
+
 # locally linear trendlines
-(biotime_plot1_loess <- ggplot(nutnetPlot, aes(x=log(rich), y=log(live_mass), color=trt)) + 
+(biotime_plot1_loess <- ggplot(biomass_by_trt, aes(x=log(mean_rich), y=log(mean_mass), color=trt)) + 
     #guides(color = "none") +
     geom_point(alpha = 0.01) +
     geom_smooth(method='loess', alpha=0.7, lwd=1.3, se=T) +
@@ -147,7 +164,7 @@ nutnetRel %>%
 )
 
 # linear trendlines
-(biotime_plot1_lm <- ggplot(nutnetPlot, aes(x=log(rich), y=log(live_mass), color=trt)) + 
+(biotime_plot1_lm <- ggplot(biomass_by_trt, aes(x=log(mean_rich), y=log(mean_mass), color=trt)) + 
     #guides(color = "none") +
     geom_point(alpha = 0.01) +
     geom_smooth(method='lm', alpha=0.7, lwd=1.3, se=T) +
@@ -163,6 +180,7 @@ nutnetRel %>%
 ### Plot2 from `nutnet_rare_spp.R`: Proportion of Species lost, by time
 
 * Needs a lot of preprocessing work from Kim's script. This is confusing, and I'm pretty sure we can cut it down somehow. 
+* _Note_: Need to check the computation of `nutnetdf_allspp`. I have a feeling we are `select`ing too many variables.. This will also impact the biotime plots. 
 * Warning! This takes a pretty long time to run.
 ```{r slide5, cache = T}
 nutnetpretreatdf <- nutnetRel %>%
@@ -198,7 +216,7 @@ freq <- nutnetpretreatdf_live %>%
   mutate(freq = PTfreq / num_plots) # (3)
 
 nutnetdf_allspp <- nutnetRel %>%
-  select(year, site_name, site_code, block, plot, subplot, year_trt, trt, Taxon, DIgroup, rel_cover) %>%
+  select(year, site_name, site_code, plot, year_trt, trt, Taxon, DIgroup, rel_cover) %>%
   group_by(site_name, site_code) %>%
   nest() %>% # (1)
   mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>%
@@ -207,6 +225,18 @@ nutnetdf_allspp <- nutnetRel %>%
   ungroup() %>%
   mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # (3)
   arrange(site_code, plot, Taxon, year)
+
+#NH: Maybe don't include DI? If using this one, need to add it back later by left_joining di_groups
+# nutnetdf_allspp_nodi <- nutnetRel %>%
+#   select(year, site_name, site_code, plot, year_trt, trt, Taxon, rel_cover) %>%
+#   group_by(site_name, site_code) %>%
+#   nest() %>% # (1)
+#   mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>%
+#                                   gather(key = Taxon, value = rel_cover, -year:-trt))) %>% #(2)
+#   unnest(spread_df) %>%
+#   ungroup() %>%
+#   mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # (3)
+#   arrange(site_code, plot, Taxon, year)
 
 # get number of years observed. will be merged in with other stuff below
 nutnetdf_length <- nutnetdf_allspp%>%
@@ -221,7 +251,7 @@ nutnetdf_length <- nutnetdf_allspp%>%
 
 # get the digroup to merge in with everything else later
 di_groups <- nutnetRel %>%
-  select(site_code, Taxon,DIgroup) %>%
+  select(site_code, plot, Taxon, DIgroup) %>%
   distinct()
 
 
@@ -282,7 +312,7 @@ nutnetLossorNotSite <- nutnetLossSite%>%
 
 
 ggplot(barGraphStats(data=subset(nutnetLossorNotSite, 
-                                 trt=='N'|trt=='NP'|trt=='NPK' | trt =="Fence"), 
+                                 trt=='N'|trt=='NP'|trt=='NPK' | trt =="Fence" | trt == "NPK+Fence"), 
                      variable="prop_loss", 
                      byFactorNames=c("trt", "DIgroup", "year_trt")), 
        aes(x=year_trt, y=mean, color=as.factor(DIgroup))) +
@@ -297,7 +327,7 @@ ggplot(barGraphStats(data=subset(nutnetLossorNotSite,
 
 
 ### Plot 3 from `nutnet_rare_spp.R`: Biomass/abudance difference over time
-* The original script had `NP_diff=(NP+Fence-Control)/Control`, as commented out below. Check if this is correct.
+* Maybe include `plot` in the first group_by?
 ```{r slide6}
 biomassResp <- nutnetRel %>%
   filter(year_trt!=0)%>%
@@ -396,7 +426,15 @@ ggplot(abund_diff_di) +
 
 
 ### Plot b from Biotime: Probability missing at the end ~ Relative Pretreatment Rank
+This one and plot c from Biotime both need a LOT of work. 
 * adapted from `2_biotime_sp_loss.R`
+    * the comments underneath each section of code are the original biotime code. I think some of the adaptations are wrong, but you can look at the original code right underneath.
+    * It looks like Kim uses some of this code in when she creates the dataframe `nutnetdf_allspp` (created above in chunk `slide5` above). I used Kim's adadptation as a starting point, but see my comments above `slide5` for some of my concerns about this.
+    * I'm also not sure about groupings. I took Biotime's `STUDY_ID` identifier to be the combination of `site_code` and `plot` in our data. 
+    * We probably want to think about replacing the logistic regressions with a binomial `glmer` at some point.
+    * Warning: this code takes a while to run. Might be worth taking a subset of the data and working with that to save time.
+
+
 ```{r biotimeB, cache = TRUE}
 ### Get REL_RANK_T0. adapted from 1_process_biotime_sp_change.R ----------------
 biotime_sum_abund <- nutnetdf_allspp %>%
@@ -495,6 +533,7 @@ biotime_loss <- biotime_sum_abund %>%
 biotime_loss_summary <- biotime_sum_abund %>%
   #get year 0 only
   group_by(site_code, plot, Taxon) %>%
+  arrange(year) %>%
   # group_by(STUDY_ID, GENUS_SPECIES, MEASURE) %>%
   # arrange(YEAR) %>%
   slice(1L) %>%
@@ -522,9 +561,9 @@ biotime_loss_summary <- biotime_sum_abund %>%
   geom_point(position=position_jitter(width=0.05, height=0.05),
              alpha=0.2, color="grey") +
     geom_smooth(method = "glm", method.args = list(family = "binomial")) + 
-    geom_smooth(data = biotime_loss_summary, 
-                method = "glm", method.args = list(family = "binomial"), 
-                formula = lost_at_end ~ REL_RANK_T0) + 
+    # geom_smooth(data = biotime_loss_summary, 
+    #             method = "glm", method.args = list(family = "binomial"), 
+    #             formula = lost_at_end ~ REL_RANK_T0) + 
     #geom_smooth() + 
   # geom_line(data = pred_final_loss_ranef,
   #           mapping=aes(y=fit, group=as.character(STUDY_ID)),
@@ -544,6 +583,9 @@ biotime_loss_summary <- biotime_sum_abund %>%
 
 ### Plot c from biotime.
 * adapted from `5_biotime_abund_biomass_loss.R`
+* see concerns from plot b in the chunk above.
+   * the `group_by`'s are my biggest concern.
+* sometimes end up dividing by 0, throwing an error
 ```{r biotimeC}
 # biotime_duo <- biotime_sum_abund %>%
 #   group_by(site_code, plot) %>%
@@ -554,7 +596,8 @@ biotime_loss_summary <- biotime_sum_abund %>%
 
 #biotime_duo_reshape <- biotime_duo %>%
 biotime_duo_reshape <- biotime_sum_abund %>%
-  dplyr::select(site_code, plot, year, Taxon, rel_cover, DIgroup) %>%
+  dplyr::select(site_code, plot, year, Taxon, rel_cover) %>%
+  dplyr::left_join(di_groups, by = c("site_code", "plot", "Taxon")) %>%
   # dplyr::select(STUDY_ID, YEAR, GENUS_SPECIES, MEASURE, SUM_VALUE) %>%
   # spread(MEASURE, SUM_VALUE) %>%
   # group_by(STUDY_ID, YEAR) %>%
@@ -597,7 +640,7 @@ biotime_duo_reshape <- biotime_sum_abund %>%
   mutate(rel_abund_rank = rel_abund_rank[1],
          # rel_biomass_rank = rel_biomass_rank[1],
          # rel_percapita_biomass_rank = rel_percapita_biomass_rank[1],
-         rel_abund_rank_t1_t3 = mean(rel_abund_rank[1:3]),
+         # rel_abund_rank_t1_t3 = mean(rel_abund_rank[1:3]),
          # rel_biomass_rank_t1_t3 = mean(rel_biomass_rank[1:3]),
          # rel_percapita_biomass_rank_t1_t3 = mean(rel_percapita_biomass_rank[1:3]),
          lag_rel_abund_rank = lag(rel_abund_rank),
