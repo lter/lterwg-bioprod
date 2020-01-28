@@ -440,6 +440,80 @@ This one and plot c from Biotime both need a LOT of work.
     * Warning: this code takes a while to run. Might be worth taking a subset of the data and working with that to save time.
 
 
+```{r}
+rel_rank_year0 <- nutnetRel %>%
+  filter(year_trt == 0) %>%
+  select(site_code, plot, trt, Taxon, rel_abundance_year0) %>%
+  group_by(site_code, trt) %>%
+  mutate(rel_rank_year0 = rank(rel_abundance_year0, ties.method = "min") %>%
+           scales::rescale(c(0,1))) %>% 
+  ungroup()
+  
+
+# site_code, plot, year, taxon is a unique identifier in our original data (nutnetRel)
+modeling_data_year0 <- nutnetdf_allspp %>% 
+  select(site_code, plot, year_trt, Taxon, rel_cover) %>%
+  left_join(rel_rank_year0, by = c("site_code", "plot", "Taxon")) %>%
+  # figure out when a species is lost
+  group_by(site_code, plot, Taxon) %>%
+  filter(year_trt == max(year_trt)) %>%
+  mutate(lost_at_end = ifelse(rel_cover == 0, 1, 0)) %>%
+  #mutate(lost_at_end = ifelse(rel_cover[1] == 0 & lead(rel_cover) == 0, 1, 0)) %>%
+  filter(#year_trt == max(year_trt),
+         trt %in% c("Control", "N", "P", "K", "NPK", "NPK+Fence")) %>%
+  ungroup()
+
+ggplot(aes(x = rel_rank_year0, y = lost_at_end, color = trt), data = modeling_data_year0) + 
+  geom_point(position=position_jitter(width=0.05, height=0.05),
+             alpha=0.2, color="grey") +
+    geom_smooth(method = "glm", method.args = list(family = "binomial"))
+
+
+         
+# library(lme4)
+# library(merTools)
+# 
+# year0_model <- glmer(lost_at_end ~ rel_rank_year0  + (1|site_code/plot), 
+#                    data = modeling_data,
+#                    family = "binomial")
+# 
+# ggplot(aes(x = rel_rank_year0, y = lost_at_end, color = trt), data = modeling_data) + 
+#   geom_point(position=position_jitter(width=0.05, height=0.05),
+#              alpha=0.2, color="grey") +
+#     geom_smooth(aes(x = rel_rank_year0, y = year0_pred))
+# 
+# newdata <- crossing(site_code = modeling_data$site_code %>% unique, 
+#                     plot = unique(modeling_data$plot), 
+#                     rel_rank_year0 = seq(0,1,length.out = 100))
+# 
+# fake_pred <- predictInterval(year0_model, newdata = newdata)
+# 
+# fake_data <- cbind(newdata, fake_pred)
+# 
+# 
+# (plot_year0 <- ggplot(fake_data, 
+#                              aes(x = rel_rank_year0, y = lost_at_end, color = trt)) +
+#     #geom_smooth(method = "glm", method.args = list(family = "binomial")) +  
+#     
+#   geom_line(mapping = aes(color = factor(DIgroup)),
+#                           # color = factor(lag_rel_percapita_biomass_rank)),
+#             size = 2) +
+#   scale_color_viridis_d(guide = guide_legend(title = "Relative\nSize Rank\nAt Time T-1"),
+#                         option = "D") +
+#   scale_fill_viridis_d(guide = guide_legend(title = "Relative\nSize Rank\nAt Time T-1"),
+#                        option = "D") +
+#   # geom_ribbon(data = loss_lag_pred_fix,
+#   #             mapping = aes(x = lag_rel_abund_rank,  group = lagsize_split,
+#   #                           fill = factor(lag_rel_percapita_biomass_rank),
+#   #                           ymin = lwr, ymax = upr), alpha = 0.3) +
+#   xlab("Relative Abundance Rank At Time T-1") +
+#   ylab("Probability of Loss at Time T")
+# )
+
+```
+
+
+
 ```{r biotimeB, cache = TRUE}
 ### Get REL_RANK_T0. adapted from 1_process_biotime_sp_change.R ----------------
 biotime_sum_abund <- nutnetdf_allspp %>%
@@ -465,7 +539,7 @@ biotime_sum_abund <- nutnetdf_allspp %>%
   #absolute rank, and relative rank
   #both including and excluding absent species
   #in each year relative to community
-  group_by(site_code, plot, year) %>%
+  group_by(site_code, plot) %>%
   mutate(ABS_RANK = rank(rel_cover, ties.method = "min"),
          REL_RANK_ALL = scales::rescale(ABS_RANK, c(0,1)),
          REL_RANK_TIMEPOINT = scales::rescale(ifelse(ABS_RANK==1,NA, ABS_RANK), c(0,1))) %>%
@@ -593,12 +667,62 @@ biotime_loss_summary <- biotime_sum_abund %>%
 * sometimes end up dividing by 0, throwing an error
 
 ```{r}
+rel_rank_by_year <- nutnetRel %>%
+  select(site_code, plot, year_trt, Taxon, rel_cover, trt) %>%
+  group_by(site_code, plot, Taxon, year_trt) %>%
+  arrange(year_trt) %>%
+  mutate(rel_abundance = mean(rel_cover)) %>%
+  ungroup() %>%
+  group_by(site_code, trt) %>%
+  mutate(rel_rank = rank(rel_abundance, ties.method = "min") %>%
+           scales::rescale(c(0,1)),
+         # only works because we sort by year
+         rel_rank_lag = lag(rel_rank)) %>%
+  #ungroup() %>%
+  select(-rel_cover) %>%
+  ungroup()
 
-modeling_data <- nutnetRel %>% 
-  select(site_code, plot, year, Taxon, rel_cover, DIgroup, rel_abundance_year0) %>%
+
+treatments <- nutnetRel %>%
+  select(trt, site_code, plot, Taxon, year_trt)
+
+# site_code, plot, year, taxon is a unique identifier in our original data (nutnetRel)
+modeling_data <- nutnetdf_allspp %>% 
+  select(site_code, plot, year_trt, Taxon, rel_cover) %>%
+  left_join(rel_rank_by_year, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
+  left_join(treatments, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
   # figure out when a species is lost
-  group_by(site_code, plot, Taxon)
-  mutate(lost = rel_cover == 0 & )
+  group_by(site_code, plot, Taxon, year_trt) %>%
+  mutate(lost = ifelse(rel_cover ==0, 1, 0)) %>%
+  ungroup() #%>%
+  #filter(trt.y %in% c("Control", "N", "P", "K", "NPK", "NPK+Fence")) 
+
+ggplot(aes(x = rel_rank_lag, y = lost, color = trt.y), data = modeling_data) + 
+  geom_point(position=position_jitter(width=0.05, height=0.05),
+             alpha=0.2, color="grey") +
+    geom_smooth(method = "glm", method.args = list(family = "binomial"))
+
+
+
+
+
+
+# site_code, plot, year, taxon is a unique identifier in our original data (nutnetRel)
+modeling_data_year0 <- nutnetdf_allspp %>% 
+  select(site_code, plot, year_trt, Taxon, rel_cover) %>%
+  left_join(rel_rank_year0, by = c("site_code", "plot", "Taxon")) %>%
+  # figure out when a species is lost
+  group_by(site_code, plot, Taxon) %>%
+  filter(year_trt == max(year_trt)) %>%
+  mutate(lost_at_end = ifelse(rel_cover == 0, 1, 0)) %>%
+  #mutate(lost_at_end = ifelse(rel_cover[1] == 0 & lead(rel_cover) == 0, 1, 0)) %>%
+  filter(#year_trt == max(year_trt),
+         trt %in% c("Control", "N", "P", "K", "NPK", "NPK+Fence")) %>%
+  ungroup()
+
+
+  
+
   
 
 ```
