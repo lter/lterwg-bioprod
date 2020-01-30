@@ -162,7 +162,8 @@ biomass_by_trt <- nutnetPlot %>%
     #geom_smooth(pred_bef_fix, method='lm', mapping=aes(y=fit), color="black", lwd=1.5) +
     labs(x = "Log Richness",
          y = "Log Biomass",
-         title = "Biomass vs Richness by Treatment (LOESS Trendlines)") + 
+         title = "Biomass vs Richness by Treatment",
+         color = "Treatment") + 
     ylim(c(4,6.5))
 )
 
@@ -325,7 +326,8 @@ ggplot(barGraphStats(data=subset(nutnetLossorNotSite,
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, position=position_dodge(width=0.7)) +
   xlab('Year') + ylab('Proportion of Species Lost') +
   #scale_color_discrete(breaks=c("1", "2", "3"), labels=c("Rare", "Intermediate", "Dominant")) +
-  facet_wrap(~trt)
+  facet_wrap(~trt) + 
+  labs(color ="DI Group")
 
 
 ```
@@ -351,11 +353,12 @@ biomassResp <- nutnetRel %>%
   gather(key=trt, value=diff, NPK_diff:NPKFence_diff)
 
 (badBiomassFig <- ggplot(data=barGraphStats(data=biomassResp, variable="diff", byFactorNames=c("year_trt", "trt")), aes(x=year_trt, y=mean, color=trt)) +
-    geom_point(size=5) +
-    stat_smooth(method = "lm", formula = y ~ x + I(x^2)) +
-    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2) +
+    geom_point(size=3) +
+    stat_smooth(method = "lm", formula = y ~ x + I(x^2), alpha = 0.2) +
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, alpha = 0.5) +
     xlab('Treatment Year') + ylab('Biomass Difference (%)') +
-    geom_hline(yintercept=0)
+    geom_hline(yintercept=0) + 
+    scale_color_discrete(name = "Treatment", labels = c("Fence", "N", "NP", "NPK", "NPK+Fence"))
   
 )
 
@@ -440,7 +443,7 @@ This one and plot c from Biotime both need a LOT of work.
     * Warning: this code takes a while to run. Might be worth taking a subset of the data and working with that to save time.
 
 
-```{r}
+```{r, cache = T}
 rel_rank_year0 <- nutnetRel %>%
   filter(year_trt == 0) %>%
   select(site_code, plot, trt, Taxon, rel_abundance_year0) %>%
@@ -460,31 +463,45 @@ modeling_data_year0 <- nutnetdf_allspp %>%
   mutate(lost_at_end = ifelse(rel_cover == 0, 1, 0)) %>%
   #mutate(lost_at_end = ifelse(rel_cover[1] == 0 & lead(rel_cover) == 0, 1, 0)) %>%
   filter(#year_trt == max(year_trt),
-         trt %in% c("Control", "N", "P", "K", "NPK", "NPK+Fence")) %>%
+         trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence")) %>%
   ungroup()
 
-ggplot(aes(x = rel_rank_year0, y = lost_at_end, color = trt), data = modeling_data_year0) + 
-  geom_point(position=position_jitter(width=0.05, height=0.05),
-             alpha=0.2, color="grey") +
-    geom_smooth(method = "glm", method.args = list(family = "binomial"))
+# ggplot(aes(x = rel_rank_year0, y = lost_at_end, color = trt), data = modeling_data_year0) + 
+#   geom_point(position=position_jitter(width=0.05, height=0.05),
+#              alpha=0.2, color="grey") +
+#     geom_smooth(method = "glm", method.args = list(family = "binomial")) + 
+#   ylab("Probability of Being\n Missing at End") +
+#   xlab("Relative Rank at 1st Time Step\n(Rare to Common)")
+
+
 
 
          
-# library(lme4)
-# library(merTools)
-# 
-# year0_model <- glmer(lost_at_end ~ rel_rank_year0  + (1|site_code/plot), 
-#                    data = modeling_data,
-#                    family = "binomial")
-# 
-# ggplot(aes(x = rel_rank_year0, y = lost_at_end, color = trt), data = modeling_data) + 
-#   geom_point(position=position_jitter(width=0.05, height=0.05),
-#              alpha=0.2, color="grey") +
-#     geom_smooth(aes(x = rel_rank_year0, y = year0_pred))
-# 
-# newdata <- crossing(site_code = modeling_data$site_code %>% unique, 
-#                     plot = unique(modeling_data$plot), 
-#                     rel_rank_year0 = seq(0,1,length.out = 100))
+library(lme4)
+library(merTools)
+
+year0_model <- glmer(lost_at_end ~ rel_rank_year0  + (1|site_code/plot) + (1|Taxon),
+                   data = modeling_data_year0,
+                   family = "binomial")
+year0_data_with_fitted_values <- modelr::add_predictions(data = modeling_data_year0, 
+                                                 model = year0_model, 
+                                                 type = "response")
+
+ggplot(aes(x = rel_rank_year0, y = pred, color = trt), data = year0_data_with_fitted_values) + 
+  # geom_point(aes(x = rel_rank_year0, y = lost_at_end), position=position_jitter(width=0.05, height=0.05),
+  #            alpha=0.2, color="grey") +
+  geom_smooth() +
+  labs(
+    y = "Probability of Being\n Missing at End",
+    x = "Relative Rank at 1st Time Step\n(Rare to Common)",
+    color = "Treatment")
+
+ggsave("biotime_b_equiv.png")
+
+# newdata <- crossing(site_code = modeling_data_year0$site_code %>% unique,
+#                     plot = unique(modeling_data_year0$plot),
+#                     rel_rank_year0 = seq(0,1,length.out = 100),
+#                     Taxon = modeling_data_year0$Taxon %>% unique)
 # 
 # fake_pred <- predictInterval(year0_model, newdata = newdata)
 # 
@@ -514,7 +531,9 @@ ggplot(aes(x = rel_rank_year0, y = lost_at_end, color = trt), data = modeling_da
 
 
 
-```{r biotimeB, cache = TRUE}
+```{r biotimeB, cache = TRUE, include = F, eval = FALSE}
+### This is me trying to adapt the biotime code. didn't go well.... - nh
+
 ### Get REL_RANK_T0. adapted from 1_process_biotime_sp_change.R ----------------
 biotime_sum_abund <- nutnetdf_allspp %>%
   # biotime_abund %>%
@@ -662,72 +681,97 @@ biotime_loss_summary <- biotime_sum_abund %>%
 
 ### Plot c from biotime.
 * adapted from `5_biotime_abund_biomass_loss.R`
+  * The biotime code looks like it actually has time t = 0 on the x axis... not a shifting t-1
 * see concerns from plot b in the chunk above.
    * the `group_by`'s are my biggest concern.
-* sometimes end up dividing by 0, throwing an error
+* The problem is that the `rel_cover` == 0 rows are artifically created in `nutnetdf_allspp` (with the spread/gather shenanigans), and every new row also corresponds to a new treatment year. This means that we're inducing a TON of zeroes, so that the rankings (which treat all the 0's as a tie for 0), create this huge gap in the ranking between 0 and the next value. To "fix" this issue, I excluded the 0's, ranked the remaining observations, and threw the 0's back in there.
 
-```{r}
-rel_rank_by_year <- nutnetRel %>%
+```{r, cache = T}
+### Compute the relative cover rankings within each site code and treatment
+#     To stop the ton of induced zeroes from impacting the rankings, we 
+#         (1) Turn the zeroes into NAs
+#         (2) Use the "na.last" argument in `rank` to exclude NAs from ranking
+#         (3) Rank the observations and change the ranking scale to be in (0,1)
+#         (4) Change the NA ranks back to zeroes.
+#         (5) Shift the ranks back so that they refer to the year before
+
+rel_rank_by_year <- nutnetdf_allspp %>%
   select(site_code, plot, year_trt, Taxon, rel_cover, trt) %>%
-  group_by(site_code, plot, Taxon, year_trt) %>%
-  arrange(year_trt) %>%
-  mutate(rel_abundance = mean(rel_cover)) %>%
-  ungroup() %>%
+  # # we want to make the ranking based on mean realtive cover for taxon in a given plot and year.
+  # group_by(site_code, plot, Taxon, year_trt) %>%
+  arrange(site_code, plot, Taxon, year_trt) %>%
+  # mutate(rel_abundance = mean(rel_cover)) %>%
+  # ungroup() %>%
+  # we want to rank the taxon among all the plots in a given site for a given treatment
   group_by(site_code, trt) %>%
-  mutate(rel_rank = rank(rel_abundance, ties.method = "min") %>%
-           scales::rescale(c(0,1)),
+  # mutate(rel_rank = rank(rel_abundance, ties.method = "min")) %>%
+  # mutate(rel_rank = ifelse(rel_cover == 0, 0, rel_rank)) %>%
+  # mutate(rel_rank = rel_rank)
+  mutate(rel_cover_explicit_na = ifelse(rel_cover == 0, NA, rel_cover), #(1)
+         rel_rank_scaled = rank(rel_cover_explicit_na, ties.method = "min", na.last = "keep") %>% #(2)
+           scales::rescale(c(0,1)),  #(3)
+         rel_rank_implicit_na = ifelse(is.na(rel_rank_scaled), 0, rel_rank_scaled), #(4)
          # only works because we sort by year
-         rel_rank_lag = lag(rel_rank)) %>%
-  #ungroup() %>%
+         rel_rank_lag = lag(rel_rank_implicit_na)) %>%  #(5)
   select(-rel_cover) %>%
   ungroup()
 
 
 treatments <- nutnetRel %>%
-  select(trt, site_code, plot, Taxon, year_trt)
+  select(trt, site_code, plot, Taxon)
 
-# site_code, plot, year, taxon is a unique identifier in our original data (nutnetRel)
+# site_code, plot, year, taxon is a unique identifier in our data
 modeling_data <- nutnetdf_allspp %>% 
-  select(site_code, plot, year_trt, Taxon, rel_cover) %>%
   left_join(rel_rank_by_year, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
-  left_join(treatments, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
+  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag) %>%
+  # the join creates NAs in lag_rel_rank at all the new "year_trts" from the new rows
+  left_join(treatments, by = c("site_code", "plot", "Taxon")) %>%
   # figure out when a species is lost
   group_by(site_code, plot, Taxon, year_trt) %>%
-  mutate(lost = ifelse(rel_cover ==0, 1, 0)) %>%
-  ungroup() #%>%
-  #filter(trt.y %in% c("Control", "N", "P", "K", "NPK", "NPK+Fence")) 
+  #mutate(lost = ifelse(rel_cover ==0 & rel_rank_lag != 0, 1, 0)) %>%
+  mutate(lost = ifelse(rel_cover == 0, 1, 0)) %>%
+  ungroup() %>%
+  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence")) 
 
-ggplot(aes(x = rel_rank_lag, y = lost, color = trt.y), data = modeling_data) + 
-  geom_point(position=position_jitter(width=0.05, height=0.05),
-             alpha=0.2, color="grey") +
-    geom_smooth(method = "glm", method.args = list(family = "binomial"))
+# # plot using a single variable glm.
+# ggplot(aes(x = rel_rank_lag, y = lost, color = trt), data = modeling_data) + 
+#   # geom_point(position=position_jitter(width=0.05, height=0.05),
+#   #            alpha=0.2, color="grey") +
+#     geom_smooth(method = "glm", method.args = list(family = "binomial")) + 
+#   labs(x = "Relative Abundance Rank at Time T-1",
+#        y = "Probability of Loss at Time T",
+#        color = "Treatment")
 
+# try a mixed effects model
+multiyear_model <- glmer(lost ~ rel_rank_lag  + (1|site_code/plot) + (1|Taxon),
+                   data = modeling_data,
+                   family = "binomial")
 
-
-
-
-
-# site_code, plot, year, taxon is a unique identifier in our original data (nutnetRel)
-modeling_data_year0 <- nutnetdf_allspp %>% 
-  select(site_code, plot, year_trt, Taxon, rel_cover) %>%
-  left_join(rel_rank_year0, by = c("site_code", "plot", "Taxon")) %>%
-  # figure out when a species is lost
-  group_by(site_code, plot, Taxon) %>%
-  filter(year_trt == max(year_trt)) %>%
-  mutate(lost_at_end = ifelse(rel_cover == 0, 1, 0)) %>%
-  #mutate(lost_at_end = ifelse(rel_cover[1] == 0 & lead(rel_cover) == 0, 1, 0)) %>%
-  filter(#year_trt == max(year_trt),
-         trt %in% c("Control", "N", "P", "K", "NPK", "NPK+Fence")) %>%
-  ungroup()
+summary(multiyear_model)
+car::Anova(multiyear_model)
+#piecewiseSEM::rsquared(multiyear_model)
 
 
-  
+# add a column in the dataframe for predictions
+multiyear_data_with_fitted_values <- modelr::add_predictions(data = modeling_data, 
+                                                 model = multiyear_model, 
+                                                 type = "response")
 
-  
+# plot the mixed effects model.
+ggplot(aes(x = rel_rank_lag, y = pred, color = trt), data = multiyear_data_with_fitted_values) + 
+  geom_smooth() +
+  labs(x = "Relative Abundance Rank at Time T-1",
+       y = "Probability of Loss at Time T",
+       color = "Treatment")
+
+ggsave("biotime_c_equiv.png")
 
 ```
 
-```{r biotimeC}
+```{r biotimeC, eval = FALSE, include = FALSE}
+##### this is me trying to adapt the biotime code line by line.. .didn't go well.
+
+
 # biotime_duo_reshape adds a rank/ relative rank for every site_code, plot, Taxon,
 # and computes "lost" by if it has 0 cover 2 years in a row.
 
