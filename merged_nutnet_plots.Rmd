@@ -192,7 +192,7 @@ biomass_by_trt <- nutnetPlot %>%
 nutnetpretreatdf <- nutnetRel %>%
   filter(year_trt == 0)
 
-# Add mean and max abundance, based on year/site_code/taxon
+# get mean and max abundance for each Site/Year/Taxon
 meanmaxAb_byspecies <- nutnetpretreatdf %>%
   group_by(year, site_code, Taxon) %>%
   summarize(meanPTAbundance = mean(rel_cover, na.rm = T),
@@ -223,30 +223,25 @@ di_groups <- nutnetRel %>%
   select(site_code, plot, Taxon, DIgroup) %>%
   distinct()
 
-# 
-# nutnetdf_allspp <- nutnetRel %>%
-#   select(year, site_name, site_code, plot, year_trt, trt, Taxon, DIgroup, rel_cover) %>%
-#   group_by(site_name, site_code) %>%
-#   nest() %>% # (1)
-#   mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>%
-#                                   gather(key = Taxon, value = rel_cover, -year:-trt))) %>% #(2)
-#   unnest(spread_df) %>%
-#   ungroup() %>%
-#   mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # (3)
-#   arrange(site_code, plot, Taxon, year)
 
-# NH: Maybe don't include DI? If using this one, need to add DI back by left_joining di_groups
+# Our data doesn't come with any rows where abundance is zero, 
+# so we assume that unseen combinations of the data are zeroes:
+# To be specific, for each site, we create every combination of (Plot, Year, Treatment) within that site (1)
+# Then we take all the Taxon found in that site (at any point) and
+# do a Cartesian product of (Plot, Year, Treatment) x Taxon. (2)
+# Then we create a column called PA to represent the new rows we added. (3)
+# Then we add back DI (since it had to be removed to do the groupings) (4)
 nutnetdf_allspp <- nutnetRel %>%
   select(year, site_name, site_code, plot, year_trt, trt, Taxon, rel_cover) %>%
   group_by(site_name) %>%
-  nest() %>% # (1)
-  mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>%
+  nest() %>% 
+  mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>% #(1)
                                   gather(key = Taxon, value = rel_cover, -year:-trt))) %>% #(2)
   unnest(spread_df) %>%
   ungroup() %>%
   mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # (3)
   arrange(site_code, plot, Taxon, year) %>%
-  left_join(di_groups, by = c("site_code", "plot", "Taxon"))
+  left_join(di_groups, by = c("site_code", "plot", "Taxon")) #(4)
 
 
 
