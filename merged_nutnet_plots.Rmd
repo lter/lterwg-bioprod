@@ -30,6 +30,7 @@ registerDoParallel()
 ## Reading in data
 nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019_old.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
   # for Doane College Spring Creek Prarie, there's an extra space
+  # nh 2/2/20: join is messed up because of this. need to fix.
   mutate(site_name.y = str_trim(site_name.y))
 
 # Getting rid of identical, duplicate columns
@@ -192,7 +193,7 @@ biomass_by_trt <- nutnetPlot %>%
 nutnetpretreatdf <- nutnetRel %>%
   filter(year_trt == 0)
 
-# get mean and max abundance for each Site/Year/Taxon
+# get mean and max abundance for each Site/Year/Taxon.. ie aggregating over plot and treatment
 meanmaxAb_byspecies <- nutnetpretreatdf %>%
   group_by(year, site_code, Taxon) %>%
   summarize(meanPTAbundance = mean(rel_cover, na.rm = T),
@@ -200,7 +201,8 @@ meanmaxAb_byspecies <- nutnetpretreatdf %>%
   ungroup() %>%
   select(-year)
 
-# Get the relative pretreatment frequency of each taxon, by year/site_code
+# Get the relative pretreatment frequency of each taxon, by year/site_code 
+# ie (# of living things / number of plots)
 # We first compute Total pretreatment Frequency by summing the live column (1)
 # Then we get the number of plots for each site by taking max(plot) (2)
 # Then we divide total frequency / number of plots (3)
@@ -217,6 +219,15 @@ freq <- nutnetpretreatdf %>%
   select(-year) %>%
   left_join(tot_plots, by = "site_code") %>% #(2b)
   mutate(freq = PTfreq / num_plots) # (3)
+
+freq2 <- nutnetpretreatdf %>%
+  group_by(site_code, Taxon) %>%
+  summarize(PTfreq = sum(live, na.rm = T)) %>% # (1)
+  ungroup() %>%
+  #select(-year) %>%
+  left_join(tot_plots, by = "site_code") %>% #(2b)
+  mutate(freq = PTfreq / num_plots) # (3)
+
 
 # get the digroup to merge in with everything else later
 di_groups <- nutnetRel %>%
@@ -256,7 +267,7 @@ nutnetdf_length <- nutnetdf_allspp%>%
 #   select(site_code, Taxon, meanPTAbundance, abund_metric) %>%
 #   distinct()
 
-
+# Abundance metric = average of mean pretreatment abundance and pretreatment frequency?
 nutnetPresAbs <- nutnetdf_allspp%>%
   left_join(meanmaxAb_byspecies, by=c('site_code', 'Taxon'))%>%
   left_join(freq, by=c('site_code', 'Taxon'))%>%
@@ -375,12 +386,12 @@ richness_diff_di <- nutnetRel %>%
   summarise(live_rich_mean=mean(rich))%>%
   ungroup()%>%
   spread(key=trt, value=live_rich_mean)%>%
-  mutate(NPK_diff=(NPK-Control)/Control, 
-         N_diff=(N-Control)/Control, 
-         NP_diff=(NP-Control)/Control,
+  mutate(NPK_diff=(NPK-Control)/Control*100, 
+         N_diff=(N-Control)/Control*100, 
+         NP_diff=(NP-Control)/Control*100,
          #NP_diff=(NP+Fence-Control)/Control,
-         Fence_diff = (Fence - Control)/Control,
-         NPKFence_diff = (`NPK+Fence` - Control)/Control)%>%
+         Fence_diff = (Fence - Control)/Control*100,
+         NPKFence_diff = (`NPK+Fence` - Control)/Control*100)%>%
   select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff, `NPK+Fence` = NPKFence_diff)%>%
   na.omit()%>%
   gather(key=trt, value=diff, NPK:`NPK+Fence`)
@@ -568,9 +579,10 @@ treatments <- nutnetRel %>%
   select(trt, site_code, plot, Taxon)
 
 # site_code, plot, year, taxon is a unique identifier in our data
-modeling_data <- nutnetdf_allspp %>% 
+modeling_data <- nutnetdf_allspp %>%
+  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence")) %>%
   left_join(rel_rank_by_year, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
-  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag) %>%
+  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag, rel_rank_scaled) %>%
   # the join creates NAs in lag_rel_rank at all the new "year_trts" from the new rows
   left_join(treatments, by = c("site_code", "plot", "Taxon")) %>%
   # figure out when a species is lost
@@ -578,7 +590,7 @@ modeling_data <- nutnetdf_allspp %>%
   #mutate(lost = ifelse(rel_cover ==0 & rel_rank_lag != 0, 1, 0)) %>%
   mutate(lost = ifelse(rel_cover == 0, 1, 0)) %>%
   #ungroup() %>%
-  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence"),
+  filter(
          # Because of how lag works, this is getting rid of all the first treatment years. 
          # the model already ignores these NAs. This just makes it explicit.
          !is.na(rel_rank_lag)) 
@@ -621,6 +633,14 @@ multiyear_data_with_fitted_values <- modelr::add_predictions(data = modeling_dat
 )
 #ggsave("biotime_c_equiv.png")
 
+
+(rank_dist_site_trt_yr <- modeling_data %>%
+  #filter(rel_rank_scaled != 0) %>%
+  ggplot() + 
+  geom_histogram(aes(rel_rank_scaled, color = year_trt), position = "stack") + 
+  facet_wrap(~trt) + 
+    labs(title = "site, year, trt")
+)
 ```
 
 
@@ -634,7 +654,7 @@ Rank by site, treatment, plot, and year
 #         (4) Change the NA ranks back to zeroes.
 #         (5) Shift the ranks back so that they refer to the year before (for each taxon within a site/plot)
 
-rel_rank_by_year_plot <- nutnetdf_allspp %>%
+rel_rank_by_year_plot_trt <- nutnetdf_allspp %>%
   select(site_code, plot, year_trt, Taxon, rel_cover, trt) %>%
   # # we want to make the ranking based on mean realtive cover for taxon in a given plot and year.
   # group_by(site_code, plot, Taxon, year_trt) %>%
@@ -664,9 +684,10 @@ treatments <- nutnetRel %>%
   select(trt, site_code, plot, Taxon)
 
 # site_code, plot, year, taxon is a unique identifier in our data
-modeling_data_plot <- nutnetdf_allspp %>% 
-  left_join(rel_rank_by_year_plot, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
-  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag) %>%
+modeling_data_plot_trt <- nutnetdf_allspp %>% 
+  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence")) %>%
+  left_join(rel_rank_by_year_plot_trt, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
+  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag, rel_rank_scaled) %>%
   # the join creates NAs in lag_rel_rank at all the new "year_trts" from the new rows
   left_join(treatments, by = c("site_code", "plot", "Taxon")) %>%
   # figure out when a species is lost
@@ -674,7 +695,7 @@ modeling_data_plot <- nutnetdf_allspp %>%
   #mutate(lost = ifelse(rel_cover ==0 & rel_rank_lag != 0, 1, 0)) %>%
   mutate(lost = ifelse(rel_cover == 0, 1, 0)) %>%
   #ungroup() %>%
-  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence"),
+  filter(
          # Because of how lag works, this is getting rid of all the first treatment years. 
          # the model already ignores these NAs. This just makes it explicit.
          !is.na(rel_rank_lag)) 
@@ -689,7 +710,7 @@ modeling_data_plot <- nutnetdf_allspp %>%
 #        color = "Treatment")
 
 # try a mixed effects model
-multiyear_model_plot <- glmer(lost ~ rel_rank_lag  + (1|site_code/plot) + (1|Taxon),
+multiyear_model_plot_trt <- glmer(lost ~ rel_rank_lag  + (1|site_code/plot) + (1|Taxon),
                    data = modeling_data_plot,
                    family = "binomial")
 
@@ -699,8 +720,8 @@ car::Anova(multiyear_model_plot)
 
 
 # add a column in the dataframe for predictions
-multiyear_data_with_fitted_values_plot <- modelr::add_predictions(data = modeling_data_plot, 
-                                                 model = multiyear_model_plot, 
+multiyear_data_with_fitted_values_plot_trt <- modelr::add_predictions(data = modeling_data_plot_trt, 
+                                                 model = multiyear_model_plot_trt, 
                                                  type = "response")
 
 # plot the mixed effects model.
@@ -718,6 +739,14 @@ multiyear_data_with_fitted_values_plot <- modelr::add_predictions(data = modelin
 
 #ggsave("biotime_c_equiv.png")
 
+
+(rank_dist_site_trt_yr_plot <- modeling_data_plot_trt %>%
+  #filter(rel_rank_scaled != 0) %>%
+  ggplot() + 
+  geom_histogram(aes(rel_rank_scaled, color = year_trt), position = "stack") + 
+  facet_wrap(~trt) +
+  labs(title ="site, year, plot, trt")
+)
 ```
 
 
@@ -733,6 +762,7 @@ Just by site and year.
 
 rel_rank_by_year_siteyear <- nutnetdf_allspp %>%
   select(site_code, plot, year_trt, Taxon, rel_cover, trt) %>%
+  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence")) %>%
   # # we want to make the ranking based on mean realtive cover for taxon in a given plot and year.
   # group_by(site_code, plot, Taxon, year_trt) %>%
   # mutate(rel_abundance = mean(rel_cover)) %>%
@@ -763,7 +793,7 @@ treatments <- nutnetRel %>%
 # site_code, plot, year, taxon is a unique identifier in our data
 modeling_data_siteyear <- nutnetdf_allspp %>% 
   left_join(rel_rank_by_year_siteyear, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
-  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag) %>%
+  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag, rel_rank_scaled) %>%
   # the join creates NAs in lag_rel_rank at all the new "year_trts" from the new rows
   left_join(treatments, by = c("site_code", "plot", "Taxon")) %>%
   # figure out when a species is lost
@@ -771,7 +801,7 @@ modeling_data_siteyear <- nutnetdf_allspp %>%
   #mutate(lost = ifelse(rel_cover ==0 & rel_rank_lag != 0, 1, 0)) %>%
   mutate(lost = ifelse(rel_cover == 0, 1, 0)) %>%
   #ungroup() %>%
-  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence"),
+  filter(
          # Because of how lag works, this is getting rid of all the first treatment years. 
          # the model already ignores these NAs. This just makes it explicit.
          !is.na(rel_rank_lag)) 
@@ -825,5 +855,65 @@ site_year + site_trt_yr + site_trt_plot_year +
 ggsave(filename = "ranking_comparison.png", units = "in", width = 15, height = 5)
 ```
 
+```{r}
+(rank_dist_site_yr <- modeling_data_siteyear %>%
+  #filter(rel_rank_scaled != 0) %>%
+  ggplot() + geom_histogram(aes(rel_rank_scaled, color = year_trt), position = "stack") + facet_wrap(~trt) + 
+   labs(title ="site, year")
+)
+
+
+rel_rank_by_year_plot <- nutnetdf_allspp %>%
+  select(site_code, plot, year_trt, Taxon, rel_cover, trt) %>%
+  # # we want to make the ranking based on mean realtive cover for taxon in a given plot and year.
+  # group_by(site_code, plot, Taxon, year_trt) %>%
+  # mutate(rel_abundance = mean(rel_cover)) %>%
+  # ungroup() %>%
+  # we want to rank the taxon among all the plots in a given site for a given treatment
+  group_by(site_code, plot, year_trt) %>%
+  # mutate(rel_rank = rank(rel_abundance, ties.method = "min")) %>%
+  # mutate(rel_rank = ifelse(rel_cover == 0, 0, rel_rank)) %>%
+  # mutate(rel_rank = rel_rank)
+  mutate(rel_cover_explicit_na = ifelse(rel_cover == 0, NA, rel_cover), #(1)
+         rel_rank_scaled = rank(rel_cover_explicit_na, ties.method = "min", na.last = "keep") %>% #(2)
+           scales::rescale(c(0,1)),  #(3)
+         rel_rank_implicit_na = ifelse(is.na(rel_rank_scaled), 0, rel_rank_scaled)) %>%#(4)
+  ungroup() %>%
+  # we want the lag to be by site and taxon. I think we also need to include plot because otherwise the lag will carry other into other plots, which could have different years.
+  group_by(site_code, Taxon, plot) %>%
+  # sort the rows
+  arrange(site_code, plot, Taxon, year_trt) %>%
+  # only works because we sort by year
+  mutate(rel_rank_lag = lag(rel_rank_implicit_na)) %>%  #(5)
+  select(-rel_cover) %>%
+  ungroup()
+
+
+# site_code, plot, year, taxon is a unique identifier in our data
+modeling_data_year_plot <- nutnetdf_allspp %>% 
+  filter(trt %in% c("Control", "N", "NP", "NPK", "NPK+Fence")) %>%
+  left_join(rel_rank_by_year_plot, by = c("site_code", "plot", "Taxon", "year_trt")) %>%
+  select(site_code, plot, year_trt, Taxon, rel_cover, rel_rank_lag, rel_rank_scaled) %>%
+  # the join creates NAs in lag_rel_rank at all the new "year_trts" from the new rows
+  left_join(treatments, by = c("site_code", "plot", "Taxon")) %>%
+  # figure out when a species is lost
+  #group_by(site_code, plot, Taxon, year_trt) %>%
+  #mutate(lost = ifelse(rel_cover ==0 & rel_rank_lag != 0, 1, 0)) %>%
+  mutate(lost = ifelse(rel_cover == 0, 1, 0)) %>%
+  #ungroup() %>%
+  filter(
+         # Because of how lag works, this is getting rid of all the first treatment years. 
+         # the model already ignores these NAs. This just makes it explicit.
+         !is.na(rel_rank_lag)) 
+
+(rank_dist_plot_yr <- modeling_data_year_plot %>%
+  #filter(rel_rank_scaled != 0) %>%
+  ggplot() + geom_histogram(aes(rel_rank_scaled, color = year_trt), position = "stack") + facet_wrap(~trt) + 
+   labs(title ="site, year, plot")
+)
+
+
+rank_dist_site_yr + rank_dist_site_trt_yr + rank_dist_site_trt_yr_plot + rank_dist_plot_yr
+```
 
 
