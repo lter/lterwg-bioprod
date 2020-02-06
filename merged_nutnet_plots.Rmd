@@ -17,13 +17,14 @@ knitr::opts_chunk$set(echo = TRUE)
 
 _Note:_ The new data Laura sent us (as of 12/12/19) is missing all of the treatments for live == 1. The code will run using the original merged data provided to us (we have it named `merged_NutNet_Oct2019_old.csv`).
 ```{r data, warning=FALSE, message=FALSE, cache = T}
-library(merTools)
+# for biotime mixed effects models
+library(merTools) 
 library(doParallel)
-library(here)
-library(tidyverse)
-library(lme4)
-library(merTools)
-library(patchwork)
+library(lme4) 
+# general utilities
+library(here)       # for file pathing
+library(tidyverse)  # for everything
+library(patchwork)  # for combining plots
 
 registerDoParallel()
 
@@ -31,7 +32,9 @@ registerDoParallel()
 nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019_old.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
   # for Doane College Spring Creek Prarie, there's an extra space
   # nh 2/2/20: join is messed up because of this. need to fix.
-  mutate(site_name.y = str_trim(site_name.y))
+  mutate(site_name.y = str_trim(site_name.y)) %>%
+  # Equality is messed up for all taxon when DI when site_code == bogong.au, plot == 3, due to different precision levels
+  mutate_if(is.numeric, ~round(.x, digits = 7))
 
 # Getting rid of identical, duplicate columns
 # removing problematic site code comp.pt
@@ -44,7 +47,8 @@ nutnetdf <- nutnetdf_raw %>%
 # The plots will focus on live biomass, so this will be our base dataset.
 nutnetRel <- nutnetdf %>%
   filter(live == 1) %>%
-  mutate(rel_cover = (max_cover/totplotcover.yr.live )*100) 
+  mutate(rel_cover = (max_cover/totplotcover.yr.live )*100) %>%
+  as_tibble()
 
 
 # this will come in handy when we're actually plotting the data.
@@ -193,13 +197,22 @@ biomass_by_trt <- nutnetPlot %>%
 nutnetpretreatdf <- nutnetRel %>%
   filter(year_trt == 0)
 
-# get mean and max abundance for each Site/Year/Taxon.. ie aggregating over plot and treatment
+# get the digroup to merge in with everything else later
+di_groups <- nutnetRel %>%
+  select(site_code, plot, Taxon, DIgroup) %>%
+  distinct()
+
+
+# get mean and max abundance for each Site/Taxon.. ie aggregating over plot and treatment
+# ? do we want to add plot to this?
 meanmaxAb_byspecies <- nutnetpretreatdf %>%
-  group_by(year, site_code, Taxon) %>%
+  group_by(site_code, Taxon) %>%
   summarize(meanPTAbundance = mean(rel_cover, na.rm = T),
             maxPTAbundance = max(rel_cover)) %>%
-  ungroup() %>%
-  select(-year)
+  ungroup()
+
+
+
 
 # Get the relative pretreatment frequency of each taxon, by year/site_code 
 # ie (# of living things / number of plots)
@@ -208,31 +221,17 @@ meanmaxAb_byspecies <- nutnetpretreatdf %>%
 # Then we divide total frequency / number of plots (3)
 tot_plots <- nutnetpretreatdf %>% #(2a)
   select(site_code, plot)%>%
-  unique()%>%
   group_by(site_code)%>%
   summarise(num_plots=max(plot))
 
+# ?do we want to add plot to this?
 freq <- nutnetpretreatdf %>%
-  group_by(year, site_code, Taxon) %>%
-  summarize(PTfreq = sum(live, na.rm = T)) %>% # (1)
-  ungroup() %>%
-  select(-year) %>%
-  left_join(tot_plots, by = "site_code") %>% #(2b)
-  mutate(freq = PTfreq / num_plots) # (3)
-
-freq2 <- nutnetpretreatdf %>%
   group_by(site_code, Taxon) %>%
   summarize(PTfreq = sum(live, na.rm = T)) %>% # (1)
   ungroup() %>%
-  #select(-year) %>%
   left_join(tot_plots, by = "site_code") %>% #(2b)
   mutate(freq = PTfreq / num_plots) # (3)
 
-
-# get the digroup to merge in with everything else later
-di_groups <- nutnetRel %>%
-  select(site_code, plot, Taxon, DIgroup) %>%
-  distinct()
 
 
 # Our data doesn't come with any rows where abundance is zero, 
@@ -250,13 +249,14 @@ nutnetdf_allspp <- nutnetRel %>%
                                   gather(key = Taxon, value = rel_cover, -year:-trt))) %>% #(2)
   unnest(spread_df) %>%
   ungroup() %>%
-  mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # (3)
+  mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # 
   arrange(site_code, plot, Taxon, year) %>%
   left_join(di_groups, by = c("site_code", "plot", "Taxon")) #(4)
 
 
 
 # get number of years observed. will be merged in with other stuff below
+  # this would be the same as if we used nutnetRel
 nutnetdf_length <- nutnetdf_allspp%>%
   #make a column for max trt year
   group_by(site_code)%>%
@@ -267,15 +267,17 @@ nutnetdf_length <- nutnetdf_allspp%>%
 #   select(site_code, Taxon, meanPTAbundance, abund_metric) %>%
 #   distinct()
 
-# Abundance metric = average of mean pretreatment abundance and pretreatment frequency?
+# Abundance metric = average of mean pretreatment abundance and pretreatment frequency over all plots?
 nutnetPresAbs <- nutnetdf_allspp%>%
   left_join(meanmaxAb_byspecies, by=c('site_code', 'Taxon'))%>%
   left_join(freq, by=c('site_code', 'Taxon'))%>%
   mutate(abund_metric=((meanPTAbundance/100)+PTfreq)/2)%>%
   filter(year_trt>0)
 
+# Aggregate over plots. (ie unique row in nutnetPresAbs is everything in group_by + plot)
+# presence = The number of plots the taxon was in (within a given year/site/trt)
+# PA = 1 if the Taxon was in at least 1 plot (for the given year/site/trt)
 nutnetPASite <- nutnetPresAbs%>%
-  #get site level presence/absence by trt
   group_by(site_code, Taxon, year_trt, trt)%>%
   summarise(presence=sum(PA))%>%
   ungroup()%>%
@@ -288,23 +290,28 @@ nutnetPACtl <- nutnetPASite%>%
   select(site_code, Taxon, year_trt, PA_ctl)
 
 # look at treatment group and compare with controls
+# ?? This used to have DI in it, but DI is defined by plot, and nutnetPASite is
+# aggregated over all plots, so it doesn't really make sense. maybe we want the duplicated groups ??
 nutnetPASiteTrt <- nutnetPASite%>%
   filter(trt!='Control')%>%
-  left_join(nutnetPACtl)%>%
+  left_join(nutnetPACtl, by = c("site_code", "Taxon", "year_trt")) %>%
   #drop species that are never present in control in a year (because those are gains in trts)
   filter(PA_ctl>0)%>%
   #merge dominance categories NH CHANGE from in-script di computation.
   # note that we're missing abund metric now, so have to add it separate
-  left_join(di_groups, by = c("site_code", "Taxon"))# %>%
+  left_join(distinct(di_groups, site_code, Taxon, DIgroup), by = c("site_code", "Taxon"))# %>%
   #left_join(abund_metric_df, by = c("site_code", "Taxon"))
 
+# Get the number of Taxon that disappear in each site/year/trt
 nutnetLossSite <- nutnetPASiteTrt%>%
   filter(PA==0)%>%
-  group_by(site_code, year_trt, trt, DIgroup)%>%
+  group_by(site_code, year_trt, trt)%>%
   summarise(num_loss=length(PA))%>%
   ungroup()
 
+
 # Looking at number of rows where species is present
+#?? Need to duplicate action on DIgroup here
 nutnetNotLossSite <- nutnetPASiteTrt%>%
   filter(PA==1)%>%
   group_by(site_code, year_trt, trt, DIgroup)%>%
