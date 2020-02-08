@@ -44,12 +44,20 @@ nutnetdf <- nutnetdf_raw %>%
   filter(site_code !="comp.pt")
 
 
-# The plots will focus on live biomass, so this will be our base dataset.
-nutnetRel <- nutnetdf %>%
-  filter(live == 1) %>%
+# pick out only the columns we're interested in
+# this will help me figure out what I'm actually using.
+nutnetdf_used <- nutnetdf %>%
+  select(site_name, site_code, year_trt, trt, plot, Taxon, DIgroup, DI,
+         totplotcover.yr.live, max_cover, live, Family, rich, live_mass,
+         rel_abundance_year0)
+
+nutnetdf_full <- nutnetdf_used %>%
   mutate(rel_cover = (max_cover/totplotcover.yr.live )*100) %>%
   as_tibble()
 
+# The plots will focus on live biomass, so this will be our base dataset.
+nutnetRel <- nutnetdf_full %>%
+  filter(live == 1) 
 
 # this will come in handy when we're actually plotting the data.
 nutnetPlot <- nutnetRel %>%
@@ -137,7 +145,7 @@ nutnetRel %>%
   inner_join(richness_raw, by = c("year_trt", "site_code", "plot", "trt")) %>%
   inner_join(richness_taxon, by = c("year_trt", "site_code")) %>%
   filter(richness_og != rich | richness_adapt != rich | richness_og != richness_adapt)
-  #filter(!isTRUE(all.equal(rich, richness_og, richness_adapt)))
+  3#filter(!isTRUE(all.equal(rich, richness_og, richness_adapt)))
 
 
 ```
@@ -242,21 +250,23 @@ freq <- nutnetpretreatdf %>%
 # Then we create a column called PA to represent the new rows we added. (3)
 # Then we add back DI (since it had to be removed to do the groupings) (4)
 nutnetdf_allspp <- nutnetRel %>%
-  select(year, site_name, site_code, plot, year_trt, trt, Taxon, rel_cover) %>%
+  select(site_name, site_code, plot, year_trt, trt, Taxon, rel_cover) %>%
   group_by(site_name) %>%
   nest() %>% 
   mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>% #(1)
-                                  gather(key = Taxon, value = rel_cover, -year:-trt))) %>% #(2)
+                                  pivot_longer(-c("site_code", "plot", "year_trt", "trt"), 
+                                               names_to = "Taxon", values_to = "rel_cover"))) %>% #(2)
   unnest(spread_df) %>%
   ungroup() %>%
   mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # 
-  arrange(site_code, plot, Taxon, year) %>%
+  arrange(site_code, plot, Taxon, year_trt) %>%
   left_join(di_groups, by = c("site_code", "plot", "Taxon")) #(4)
 
 
 
+
 # get number of years observed. will be merged in with other stuff below
-  # this would be the same as if we used nutnetRel
+  # this would be the same as if we used nutnetRel instead of nutnetdf_allspp
 nutnetdf_length <- nutnetdf_allspp%>%
   #make a column for max trt year
   group_by(site_code)%>%
@@ -298,8 +308,8 @@ nutnetPASiteTrt <- nutnetPASite%>%
   #drop species that are never present in control in a year (because those are gains in trts)
   filter(PA_ctl>0)%>%
   #merge dominance categories NH CHANGE from in-script di computation.
-  # note that we're missing abund metric now, so have to add it separate
   left_join(distinct(di_groups, site_code, Taxon, DIgroup), by = c("site_code", "Taxon"))# %>%
+  # note that we're missing abund metric now, so have to add it separate
   #left_join(abund_metric_df, by = c("site_code", "Taxon"))
 
 # Get the number of Taxon that disappear in each site/year/trt
@@ -311,7 +321,6 @@ nutnetLossSite <- nutnetPASiteTrt%>%
 
 
 # Looking at number of rows where species is present
-#?? Need to duplicate action on DIgroup here
 nutnetNotLossSite <- nutnetPASiteTrt%>%
   filter(PA==1)%>%
   group_by(site_code, year_trt, trt, DIgroup)%>%
@@ -331,11 +340,16 @@ nutnetLossorNotSite <- nutnetLossSite%>%
   filter(year_trt<11)
 
 
-ggplot(barGraphStats(data=subset(nutnetLossorNotSite, 
+
+
+nutnetLoss_trtDIyr <- barGraphStats(data=subset(nutnetLossorNotSite, 
                                  trt=='N'|trt=='NP'|trt=='NPK' | trt =="Fence" | trt == "NPK+Fence"), 
                      variable="prop_loss", 
-                     byFactorNames=c("trt", "DIgroup", "year_trt")), 
-       aes(x=year_trt, y=mean, color=as.factor(DIgroup))) +
+                     byFactorNames=c("trt", "DIgroup", "year_trt")) %>%
+  as_tibble
+
+
+ggplot(nutnetLoss_trtDIyr, aes(x=year_trt, y=mean, color=as.factor(DIgroup))) +
   geom_point(stat='identity', position=position_dodge(width=0.7)) +
   geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, position=position_dodge(width=0.7)) +
   xlab('Year') + ylab('Proportion of Species Lost') +
@@ -364,9 +378,16 @@ biomassResp <- nutnetRel %>%
          NPKFence_diff = (`NPK+Fence` - Control)/Control)%>%
   select(site_code, year_trt, NPK_diff, N_diff, NP_diff, Fence_diff, NPKFence_diff)%>%
   na.omit()%>%
-  gather(key=trt, value=diff, NPK_diff:NPKFence_diff)
+  #gather(key=trt, value=diff, NPK_diff:NPKFence_diff)%>%
+  pivot_longer(-c(site_code, year_trt), names_to = "trt", values_to = "diff")
 
-(badBiomassFig <- ggplot(data=barGraphStats(data=biomassResp, variable="diff", byFactorNames=c("year_trt", "trt")), aes(x=year_trt, y=mean, color=trt)) +
+
+biomassResp_summary <- barGraphStats(data=biomassResp, 
+                                     variable="diff", 
+                                     byFactorNames=c("year_trt", "trt"))
+
+(badBiomassFig <- ggplot(biomassResp_summary, 
+                         aes(x=year_trt, y=mean, color=trt)) +
     geom_point(size=3) +
     stat_smooth(method = "lm", formula = y ~ x + I(x^2), alpha = 0.2) +
     geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, alpha = 0.5) +
@@ -718,11 +739,11 @@ modeling_data_plot_trt <- nutnetdf_allspp %>%
 
 # try a mixed effects model
 multiyear_model_plot_trt <- glmer(lost ~ rel_rank_lag  + (1|site_code/plot) + (1|Taxon),
-                   data = modeling_data_plot,
+                   data = modeling_data_plot_trt,
                    family = "binomial")
 
-summary(multiyear_model_plot)
-car::Anova(multiyear_model_plot)
+summary(multiyear_model_plot_trt)
+car::Anova(multiyear_model_plot_trt)
 #piecewiseSEM::rsquared(multiyear_model_plot)
 
 
@@ -733,7 +754,7 @@ multiyear_data_with_fitted_values_plot_trt <- modelr::add_predictions(data = mod
 
 # plot the mixed effects model.
 (site_trt_plot_year <- ggplot(aes(x = rel_rank_lag, y = pred, color = trt), 
-                              data = multiyear_data_with_fitted_values_plot) + 
+                              data = multiyear_data_with_fitted_values_plot_trt) + 
   geom_smooth() +
   labs(title = "Ranked by Site, Plot, Trt, Year",
        x = "Relative Abundance Rank at Time T-1",
