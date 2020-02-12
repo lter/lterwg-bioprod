@@ -8,8 +8,7 @@ rm(list=ls())
 setwd("~/Google Drive/LTER_Biodiversity_Productivity")
 
 #kim's wd
-setwd('C:\\Users\\la pierrek\\Dropbox (Smithsonian)\\nutrient network\\NutNet data')
-setwd('C:\\Users\\lapie\\Dropbox (Smithsonian)\\nutrient network\\NutNet data')
+# setwd('C:\\Users\\lapie\\Dropbox (Smithsonian)\\nutrient network\\NutNet data')
 
 library(grid)
 library(lme4)
@@ -19,6 +18,7 @@ library(DHARMa)
 library(car)
 library(AICcmodavg)
 library(tidyverse)
+library(ggplot2)
 
 theme_set(theme_bw())
 theme_update(axis.title.x=element_text(size=20, vjust=-0.35, margin=margin(t=15)), axis.text.x=element_text(size=16),
@@ -50,7 +50,11 @@ barGraphStats <- function(data, variable, byFactorNames) {
 
 
 #########
-nutnetdf <-read.csv("full-cover-02-August-2019.csv")
+nutnetdf <- read.csv("~Dropbox/IV in ecology/NutNet/NutNetCoverData_ProcessedAug2019.csv")
+
+# kim's code: LD changed on sept 30 2019
+# nutnetdf <-read.csv("full-cover-21-February-2019.csv")
+
 # 
 # nutnetpretreatdt <- data.table(nutnetpretreatdf)
 # nutnetpretreatdt[, meanPTAbundance:=mean(rel_cover, na.rm=T), .(year, site_code, Taxon)]
@@ -210,7 +214,7 @@ nutnetPresAbs <- nutnetdf_allspp%>%
 
 ###proportion of years absent
 nutnetPropAbs <- nutnetPresAbs%>%
-  group_by(site_code, Taxon, plot, trt, abund_metric, meanPTAbundance, PTfreq)%>%
+  group_by(site_code, Taxon, plot, trt, abund_metric)%>%
   summarise(years_present=sum(PA))%>%
   ungroup()%>%
   left_join(nutnetdf_length)%>%
@@ -237,15 +241,15 @@ ggplot(nutnetPropAbsDiff, aes(x=abund_metric, y=prop_years_absent_diff)) +
   facet_wrap(~trt)
 
 n <- 100
-newdata <- crossing(meanPTAbundance=seq(0,100,length.out=n), 
+newdata <- crossing(abund_metric=seq(0,30,length.out=n), 
                     site_code = unique(nutnetPropAbs$site_code))
-newdata_fixed <- data.frame(meanPTAbundance=seq(0,100,length.out=n), 
+newdata_fixed <- data.frame(abund_metric=seq(0,30,length.out=n), 
                             site_code = unique(nutnetPropAbs$site_code)[1])
 
 
 
 #NPK plot model
-modPropAbsentNPK <- glmer(prop_years_absent_diff ~ meanPTAbundance + (1 + as.factor(plot)|site_code),
+modPropAbsentNPK <- glmer(prop_years_absent_diff ~ abund_metric + (1 + abund_metric|site_code),
                           data = subset(nutnetPropAbsDiff, trt=='NPK'))
 pred_final_loss_fixed <- cbind(newdata_fixed, predictInterval(modPropAbsentNPK,
                                                               newdata=newdata_fixed,
@@ -256,8 +260,9 @@ pred_final_loss_ranef <- cbind(newdata, predictInterval(modPropAbsentNPK,
                                                         which="full", type="probability",
                                                         include.resid.var = F))
 
-ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=meanPTAbundance, y=prop_years_absent, group=as.character(site_code), color=PTfreq)) +
-  geom_point() +
+ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=abund_metric, y=prop_years_absent, group=as.character(site_code))) +
+  geom_point(position=position_jitter(width=0.05, height=0.05),
+             alpha=0.2, color="grey") +
   geom_line(data = pred_final_loss_ranef,
             mapping=aes(y=fit, group=as.character(site_code)),
             lwd=0.4, alpha=0.4, color="lightgrey") +
@@ -265,11 +270,9 @@ ggplot(subset(nutnetPropAbs, trt=='NPK'), aes(x=meanPTAbundance, y=prop_years_ab
             mapping=aes(y=fit),
             color="black", lwd=1.3) +
   ylab("Proportion Years Absent") +
-  xlab("Pre-Treatment Abundance")
+  xlab("Dominance Indicator Index")
 
-#linear model
-summary(modPropAbsentNPK <- glm(prop_years_absent_diff ~ meanPTAbundance,
-                          data = subset(nutnetPropAbsDiff, trt=='NPK')))
+
 
 
 
@@ -294,13 +297,6 @@ ggplot(nutnet_finalabund2, aes(x=abund_metric, y=final_cover)) +
 #export at 1200x1200
 
 
-
-###bring in biomass (function) component
-biomass <- read.csv('full-biomass-22-February-2019.csv')%>%
-  filter(live==1)%>%
-  group_by(site_code, plot, subplot, year_trt)%>%
-  summarise(anpp=sum(mass))%>%
-  ungroup()
 
 ###BEF figure (traditional)
 #notes, do we want to just include controls? and only 30 pretrt plots?
@@ -410,16 +406,6 @@ nutnetAbsSite <- nutnetPresAbs%>%
   group_by(site_code, Taxon, year_trt, trt)%>%
   summarise(presence=sum(PA))%>%
   ungroup()%>%
-  filter(trt!='NA')%>%
-  spread(key=trt, value=richness)%>%
-  select(-N, -P, -K, -NP, -NK, -PK)%>%
-  mutate(NPK_rich=(NPK-Control)/Control, Fence_rich=(Fence-Control)/Control, NPKfence_rich=(NPK+Fence-Control)/Control)%>%
-  select(site_code, year_trt, DI, NPK_rich, Fence_rich, NPKfence_rich)%>%
-  gather(key=trt, value=richness_diff, NPK_rich:NPKfence_rich)%>%
-  na.omit()%>%
-  filter(year_trt!=999999)
-
-ggplot(data=barGraphStats(data=nutnetRichnessDI, variable="richness_diff", byFactorNames=c("year_trt", "trt", "DI")), aes(x=year_trt, y=mean, color=DI)) +
   mutate(PA=ifelse(presence>0, 1, 0))%>%
   #proportion of years absent for trts
   group_by(site_code, Taxon, trt)%>%
@@ -461,16 +447,7 @@ nutnetPASite <- nutnetPresAbs%>%
   group_by(site_code, Taxon, year_trt, trt)%>%
   summarise(presence=sum(PA))%>%
   ungroup()%>%
-  filter(trt!='NA')%>%
-  spread(key=trt, value=richness)%>%
-  select(-N, -P, -K, -NP, -NK, -PK)%>%
-  mutate(NPK_rich=(NPK-Control)/Control, Fence_rich=(Fence-Control)/Control, NPKfence_rich=(NPK+Fence-Control)/Control)%>%
-  select(site_code, year_trt, abund, NPK_rich, Fence_rich, NPKfence_rich)%>%
-  gather(key=trt, value=richness_diff, NPK_rich:NPKfence_rich)%>%
-  na.omit()%>%
-  filter(year_trt!=999999)
   mutate(PA=ifelse(presence>0, 1, 0))
-
 nutnetPACtl <- nutnetPASite%>%
   filter(trt=='Control')%>%
   rename(PA_ctl=PA)%>%
@@ -507,42 +484,7 @@ ggplot(subset(nutnetAbsentSiteTrt, trt=='NPK'), aes(x=abund_metric, y=prop_years
   xlab("Dominance Indicator Index")
 
 
-###changes in mean abundances
-#merge groupings with data
-nutnetAbundDI <- nutnetPresAbs%>%
-  select(site_code, Taxon, plot, year_trt, trt, rel_cover)%>%
-  left_join(nutnetSppGroups)%>%
-  mutate(DI=ifelse(DI_group==1, 'rare', ifelse(DI_group==2, 'int', 'common')))%>%
-  filter(rel_cover>0)%>%
-  group_by(site_code, year_trt, trt, DI)%>%
-  summarise(mean_abund=mean(rel_cover))%>%
-  ungroup()%>%
-  filter(trt!='NA')%>%
-  spread(key=trt, value=mean_abund)%>%
-  select(-N, -P, -K, -NP, -NK, -PK)%>%
-  mutate(NPK_abund=(NPK-Control)/Control, Fence_abund=(Fence-Control)/Control, NPKfence_abund=(NPK+Fence-Control)/Control)%>%
-  select(site_code, year_trt, DI, NPK_abund, Fence_abund, NPKfence_abund)%>%
-  gather(key=trt, value=abund_diff, NPK_abund:NPKfence_abund)%>%
-  na.omit()%>%
-  filter(year_trt!=999999)
 
-
-nutnetAbundAbund <- nutnetPresAbs%>%
-  select(site_code, Taxon, plot, year_trt, trt, rel_cover)%>%
-  left_join(nutnetSppGroups)%>%
-  mutate(abund=ifelse(abund_group==1, 'rare', ifelse(abund_group==2, 'int', 'common')))%>%
-  filter(rel_cover>0)%>%
-  group_by(site_code, year_trt, trt, abund)%>%
-  summarise(mean_abund=mean(rel_cover))%>%
-  ungroup()%>%
-  filter(trt!='NA')%>%
-  spread(key=trt, value=mean_abund)%>%
-  select(-N, -P, -K, -NP, -NK, -PK)%>%
-  mutate(NPK_abund=(NPK-Control)/Control, Fence_abund=(Fence-Control)/Control, NPKfence_abund=(NPK+Fence-Control)/Control)%>%
-  select(site_code, year_trt, abund, NPK_abund, Fence_abund, NPKfence_abund)%>%
-  gather(key=trt, value=abund_diff, NPK_abund:NPKfence_abund)%>%
-  na.omit()%>%
-  filter(year_trt!=999999)
 
 #for each site, how many spp in each category lost?
 nutnetLossSite <- nutnetPASiteTrt%>%
@@ -592,7 +534,7 @@ ggplot(barGraphStats(data=subset(nutnetLossorNotSite10yr, trt=='N'|trt=='NP'|trt
   xlab('Year') + ylab('Proportion of Species Lost') +
   scale_color_discrete(breaks=c("1", "2", "3"), labels=c("Rare", "Intermediate", "Dominant")) +
   facet_wrap(~trt)
-  
+
 
 
 
