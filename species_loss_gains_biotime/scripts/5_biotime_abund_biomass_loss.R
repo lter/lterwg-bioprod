@@ -147,7 +147,7 @@ ggplot(biotime_duo_reshape %>% filter(lost) %>% filter(present_t1_t3),
 loss_mod_lag <- glmer(lost ~ lag_rel_abund_rank*lag_rel_percapita_biomass_rank +
                     (1|GENUS_SPECIES) +
                     (1 |STUDY_ID),
-                  data = biotime_duo_reshape,
+                  data = biotime_duo_reshape %>% filter(lag_rel_abund_rank != 0),
                   family = "binomial")
 
 piecewiseSEM::rsquared(loss_mod_lag)
@@ -183,7 +183,7 @@ loss_lag_pred_fix <- cbind(newdata, loss_lag_pred_fix)
 
 ggplot(data = biotime_duo_reshape %>% 
          mutate(lagsize_split = cut_interval(lag_rel_percapita_biomass_rank, 4)) %>%
-         filter(!is.na(lagsize_split))
+         filter(!is.na(lagsize_split))%>% filter(lag_rel_abund_rank != 0)
 ) +
   geom_jitter(mapping = aes(x = lag_rel_abund_rank, y = as.numeric(lost)),
               position = position_jitter(width = 0.1, height = 0.1),
