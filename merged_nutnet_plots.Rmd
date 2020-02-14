@@ -61,7 +61,37 @@ nutnetRel <- nutnetdf_full %>%
 
 # this will come in handy when we're actually plotting the data.
 nutnetPlot <- nutnetRel %>%
-  filter(trt %in% c("Control", "Fence", "N", "NP", "NPK", "Fence", "NPK+Fence"))
+  filter(trt %in% c("Control", "Fence", "N", "NP", "NPK", "NPK+Fence"))
+
+
+# get the digroup to merge in with everything else later
+di_groups <- nutnetRel %>%
+  select(site_code, plot, Taxon, DIgroup) %>%
+  distinct()
+
+# Our data doesn't come with any rows where abundance is zero, 
+# so we assume that unseen combinations of the data are zeroes:
+# To be specific, for each site, we create every combination of (Plot, Year, Treatment) within that site (1)
+# Then we take all the Taxon found in that site (at any point) and
+# do a Cartesian product of (Plot, Year, Treatment) x Taxon. (2)
+# Then we create a column called PA to represent the new rows we added. (3)
+# Then we add back DI (since it had to be removed to do the groupings) (4)
+nutnetdf_allspp <- nutnetRel %>%
+  select(site_name, site_code, plot, year_trt, trt, Taxon, rel_cover) %>%
+  group_by(site_name) %>%
+  nest() %>% 
+  mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>% #(1)
+                                  pivot_longer(-c("site_code", "plot", "year_trt", "trt"), 
+                                               names_to = "Taxon", values_to = "rel_cover"))) %>% #(2)
+  unnest(spread_df) %>%
+  ungroup() %>%
+  mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # 
+  arrange(site_code, plot, Taxon, year_trt) %>%
+  select(-data) %>%
+  left_join(di_groups, by = c("site_code", "plot", "Taxon")) #(4)
+
+
+trt_of_interest <- c("N", "NP", "NPK", "Fence", "NPK+Fence")
 ```
 
 ### Setup code borrowed from `nutnet_rare_spp.R`
@@ -77,20 +107,30 @@ theme_update(axis.title.x=element_text(size=20, vjust=-0.35, margin=margin(t=15)
 
 
 ### Helper Function: Compute a bunch of summary statistics for plotting
+### This function was created in nutnetdf_allspp.R
+## this is equivalent to data %>% group_by(byFactorNames) %>% summarize(N = n(), mean = mean(variable), sd = sd(variable)) %>% ungroup() %>% mutate(sd = sd / sqrt(N))
+#' @param data is the table we're aggregating
+#' @param variable is the variable we're taking the mean/avg/sd/se of 
+#' @param byFactorNames is what we're grouping by.
 barGraphStats <- function(data, variable, byFactorNames) {
   count <- length(byFactorNames)
+  
   N <- aggregate(data[[variable]], data[byFactorNames], FUN=length)
   names(N)[1:count] <- byFactorNames
   names(N) <- sub("^x$", "N", names(N))
+  
   mean <- aggregate(data[[variable]], data[byFactorNames], FUN=mean)
   names(mean)[1:count] <- byFactorNames
   names(mean) <- sub("^x$", "mean", names(mean))
+  
   sd <- aggregate(data[[variable]], data[byFactorNames], FUN=sd)
   names(sd)[1:count] <- byFactorNames
   names(sd) <- sub("^x$", "sd", names(sd))
+  
   preSummaryStats <- merge(N, mean, by=byFactorNames)
   finalSummaryStats <- merge(preSummaryStats, sd, by=byFactorNames)
   finalSummaryStats$se <- finalSummaryStats$sd / sqrt(finalSummaryStats$N)
+  
   return(finalSummaryStats)
 }  
 
@@ -197,167 +237,43 @@ biomass_by_trt <- nutnetPlot %>%
 ```
 
 ### Plot2 from `nutnet_rare_spp.R`: Proportion of Species lost, by time
+Nathan's attempt at plot 2. plotting # lost / number species, each point is YEAR. (within treatment/di group). IE we average over all sites.
+```{r}
 
-* Needs a lot of preprocessing work from Kim's script. This is confusing, and I'm pretty sure we can cut it down somehow. 
-* _Note_: Need to check the computation of `nutnetdf_allspp`. I have a feeling we are `select`ing too many variables.. This will also impact the biotime plots. 
-* Warning! This takes a pretty long time to run.
-```{r slide5, cache = T}
-nutnetpretreatdf <- nutnetRel %>%
-  filter(year_trt == 0)
-
-# get the digroup to merge in with everything else later
-di_groups <- nutnetRel %>%
-  select(site_code, plot, Taxon, DIgroup) %>%
-  distinct()
-
-
-# get mean and max abundance for each Site/Taxon.. ie aggregating over plot and treatment
-# ? do we want to add plot to this?
-meanmaxAb_byspecies <- nutnetpretreatdf %>%
-  group_by(site_code, Taxon) %>%
-  summarize(meanPTAbundance = mean(rel_cover, na.rm = T),
-            maxPTAbundance = max(rel_cover)) %>%
-  ungroup()
-
-
-
-
-# Get the relative pretreatment frequency of each taxon, by year/site_code 
-# ie (# of living things / number of plots)
-# We first compute Total pretreatment Frequency by summing the live column (1)
-# Then we get the number of plots for each site by taking max(plot) (2)
-# Then we divide total frequency / number of plots (3)
-tot_plots <- nutnetpretreatdf %>% #(2a)
-  select(site_code, plot)%>%
-  group_by(site_code)%>%
-  summarise(num_plots=max(plot))
-
-# ?do we want to add plot to this?
-freq <- nutnetpretreatdf %>%
-  group_by(site_code, Taxon) %>%
-  summarize(PTfreq = sum(live, na.rm = T)) %>% # (1)
+# Create a table of summary statistics for each year within a treatment and DIgroup
+  # The idea is to get the number of lost taxon for each grouping.
+prop_lost_by_yrTrtDI <- nutnetdf_allspp %>%
+  filter(trt %in% c("N", "NP", "NPK", "NPK+Fence", "Fence"),
+         year_trt > 0,            # we don't want to say something was lost if it was never there.
+         !is.na(DIgroup)) %>%     # DI group was defined at pretreatment levels, so DI group NA means 
+                                      # we didn't have pretreatment info.
+  group_by(year_trt, trt, DIgroup) %>%
+  # PA is 1 if the species is there, so 1 - PA is 1 if  the species is lost
+  summarize(mean_prop_lost = mean(1 - PA),
+            sd_prop_lost = sd(1 - PA),
+            n = n()) %>%
   ungroup() %>%
-  left_join(tot_plots, by = "site_code") %>% #(2b)
-  mutate(freq = PTfreq / num_plots) # (3)
+  mutate(se_prop_lost = sd_prop_lost / sqrt(n))
 
-
-
-# Our data doesn't come with any rows where abundance is zero, 
-# so we assume that unseen combinations of the data are zeroes:
-# To be specific, for each site, we create every combination of (Plot, Year, Treatment) within that site (1)
-# Then we take all the Taxon found in that site (at any point) and
-# do a Cartesian product of (Plot, Year, Treatment) x Taxon. (2)
-# Then we create a column called PA to represent the new rows we added. (3)
-# Then we add back DI (since it had to be removed to do the groupings) (4)
-nutnetdf_allspp <- nutnetRel %>%
-  select(site_name, site_code, plot, year_trt, trt, Taxon, rel_cover) %>%
-  group_by(site_name) %>%
-  nest() %>% 
-  mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>% #(1)
-                                  pivot_longer(-c("site_code", "plot", "year_trt", "trt"), 
-                                               names_to = "Taxon", values_to = "rel_cover"))) %>% #(2)
-  unnest(spread_df) %>%
-  ungroup() %>%
-  mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # 
-  arrange(site_code, plot, Taxon, year_trt) %>%
-  left_join(di_groups, by = c("site_code", "plot", "Taxon")) #(4)
-
-
-
-
-# get number of years observed. will be merged in with other stuff below
-  # this would be the same as if we used nutnetRel instead of nutnetdf_allspp
-nutnetdf_length <- nutnetdf_allspp%>%
-  #make a column for max trt year
-  group_by(site_code)%>%
-  summarise(length=max(year_trt))
-
-#get the abundance metric to merge with everything else later (NH CHANGE)
-# abund_metric_df <- nutnetdf_allspp3Trt %>%
-#   select(site_code, Taxon, meanPTAbundance, abund_metric) %>%
-#   distinct()
-
-# Abundance metric = average of mean pretreatment abundance and pretreatment frequency over all plots?
-nutnetPresAbs <- nutnetdf_allspp%>%
-  left_join(meanmaxAb_byspecies, by=c('site_code', 'Taxon'))%>%
-  left_join(freq, by=c('site_code', 'Taxon'))%>%
-  mutate(abund_metric=((meanPTAbundance/100)+PTfreq)/2)%>%
-  filter(year_trt>0)
-
-# Aggregate over plots. (ie unique row in nutnetPresAbs is everything in group_by + plot)
-# presence = The number of plots the taxon was in (within a given year/site/trt)
-# PA = 1 if the Taxon was in at least 1 plot (for the given year/site/trt)
-nutnetPASite <- nutnetPresAbs%>%
-  group_by(site_code, Taxon, year_trt, trt)%>%
-  summarise(presence=sum(PA))%>%
-  ungroup()%>%
-  mutate(PA=ifelse(presence>0, 1, 0))
-
-# Look at controls
-nutnetPACtl <- nutnetPASite%>%
-  filter(trt=='Control')%>%
-  rename(PA_ctl=PA)%>%
-  select(site_code, Taxon, year_trt, PA_ctl)
-
-# look at treatment group and compare with controls
-# ?? This used to have DI in it, but DI is defined by plot, and nutnetPASite is
-# aggregated over all plots, so it doesn't really make sense. maybe we want the duplicated groups ??
-nutnetPASiteTrt <- nutnetPASite%>%
-  filter(trt!='Control')%>%
-  left_join(nutnetPACtl, by = c("site_code", "Taxon", "year_trt")) %>%
-  #drop species that are never present in control in a year (because those are gains in trts)
-  filter(PA_ctl>0)%>%
-  #merge dominance categories NH CHANGE from in-script di computation.
-  left_join(distinct(di_groups, site_code, Taxon, DIgroup), by = c("site_code", "Taxon"))# %>%
-  # note that we're missing abund metric now, so have to add it separate
-  #left_join(abund_metric_df, by = c("site_code", "Taxon"))
-
-# Get the number of Taxon that disappear in each site/year/trt
-nutnetLossSite <- nutnetPASiteTrt%>%
-  filter(PA==0)%>%
-  group_by(site_code, year_trt, trt)%>%
-  summarise(num_loss=length(PA))%>%
-  ungroup()
-
-
-# Looking at number of rows where species is present
-nutnetNotLossSite <- nutnetPASiteTrt%>%
-  filter(PA==1)%>%
-  group_by(site_code, year_trt, trt, DIgroup)%>%
-  summarise(num_notloss=length(PA))%>%
-  ungroup()
-
-# Getting the proportion of species lost in each row ?
-nutnetLossorNotSite <- nutnetLossSite%>%
-  full_join(nutnetNotLossSite)%>%
-  mutate(num_loss=replace_na(num_loss, 0))%>%
-  mutate(num_notloss=replace_na(num_notloss, 0))%>%
-  mutate(total_spp=num_loss+num_notloss)%>%
-  mutate(prop_loss=num_loss/total_spp)%>%
-  #remove sites with no DI groups (no pretrt data)
-  filter(!is.na(DIgroup))%>%
-  #remove sites where trt year is not recorded
-  filter(year_trt<11)
-
-
-
-
-nutnetLoss_trtDIyr <- barGraphStats(data=subset(nutnetLossorNotSite, 
-                                 trt=='N'|trt=='NP'|trt=='NPK' | trt =="Fence" | trt == "NPK+Fence"), 
-                     variable="prop_loss", 
-                     byFactorNames=c("trt", "DIgroup", "year_trt")) %>%
-  as_tibble
-
-
-ggplot(nutnetLoss_trtDIyr, aes(x=year_trt, y=mean, color=as.factor(DIgroup))) +
+ggplot(prop_lost_by_yrTrtDI, aes(x=year_trt, y=mean_prop_lost, color=as.factor(DIgroup))) +
   geom_point(stat='identity', position=position_dodge(width=0.7)) +
-  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, position=position_dodge(width=0.7)) +
-  xlab('Year') + ylab('Proportion of Species Lost') +
+  geom_errorbar(aes(ymin=mean_prop_lost-se_prop_lost,
+                    ymax=mean_prop_lost+se_prop_lost), width=0.2, position=position_dodge(width=0.7)) +
   #scale_color_discrete(breaks=c("1", "2", "3"), labels=c("Rare", "Intermediate", "Dominant")) +
   facet_wrap(~trt) + 
-  labs(color ="DI Group")
+  labs(xlab = "Year", 
+       ylab = "Proportion of Species Lost",
+       color ="DI Group")
 
-
+# Q: Why do the bars get so big at the end?
+# A: there are just so much fewer taxon in the later years, so the standard error (sd / sqrt(n)) blows up.
+prop_lost_by_yrTrtDI %>%
+  arrange(desc(year_trt)) %>%
+  group_by(year_trt) %>%
+  summarize(num_taxon = sum(n)) %>%
+  ggplot() + 
+  geom_col(aes(x = year_trt, y = num_taxon)) + 
+  labs(title = "Number of Taxon Per Treatment Year")
 ```
 
 
@@ -546,7 +462,7 @@ year0_pred <- predictInterval(year0_model,
                           which="fixed", type="probability",
                           include.resid.var = FALSE)
 #get ranef predictions
-year0_ranef_pred <- cbind(newdata, year0_pred)
+year0_ranef_pred <- cbind(newdata_year0, year0_pred)
 
 #replot with raw data and model predictions
 (missing_at_end <- ggplot() +
@@ -773,7 +689,7 @@ loss_lag_pred_fix <- cbind(newdata, loss_lag_pred_fix)
   xlab("Relative Abundance Rank At Time T-1") +
   ylab("Probability of Loss at Time T")
 )
-ggsave("biotime_c_equiv.png")
+#ggsave("biotime_c_equiv.png")
 
 
 
@@ -784,4 +700,5 @@ ggsave("biotime_c_equiv.png")
   facet_wrap(~trt) +
   labs(title ="site, year, plot, trt")
 )
+
 ```
