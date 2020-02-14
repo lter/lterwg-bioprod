@@ -258,12 +258,15 @@ prop_lost_by_yrTrtDI <- nutnetdf_allspp %>%
 ggplot(prop_lost_by_yrTrtDI, aes(x=year_trt, y=mean_prop_lost, color=as.factor(DIgroup))) +
   geom_point(stat='identity', position=position_dodge(width=0.7)) +
   geom_errorbar(aes(ymin=mean_prop_lost-se_prop_lost,
-                    ymax=mean_prop_lost+se_prop_lost), width=0.2, position=position_dodge(width=0.7)) +
+                    ymax=mean_prop_lost+se_prop_lost), 
+                width=0.2, 
+                position=position_dodge(width=0.7)) +
   #scale_color_discrete(breaks=c("1", "2", "3"), labels=c("Rare", "Intermediate", "Dominant")) +
   facet_wrap(~trt) + 
-  labs(xlab = "Year", 
-       ylab = "Proportion of Species Lost",
-       color ="DI Group")
+  labs(x = "Year", 
+       y = "Proportion of Species Lost",
+       color = "DI Group") + 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5))
 
 # Q: Why do the bars get so big at the end?
 # A: there are just so much fewer taxon in the later years, so the standard error (sd / sqrt(n)) blows up.
@@ -278,14 +281,20 @@ prop_lost_by_yrTrtDI %>%
 
 
 ### Plot 3 from `nutnet_rare_spp.R`: Biomass/abudance difference over time
-* Maybe include `plot` in the first group_by?
+Points in the plot are (Treatment year, Treatment) combinations, and the error bars represent the variation between sites for each of those combinations.
+
+* Maybe include `plot` in the first group_by? or exclude `site_code`?
+  * adding plot won't do anything I think. just adds another level of abstraction (ie we take 3 avrages instead of 2) (It's 2 right now because biomassResp aggregates over all the plots for a treatment, and the summary aggregates over all sites.)
+  * The only differences would be in the standard errors, i think? because we're changing the n we're looking at.( right now n is number of sites)
 ```{r slide6}
+# Get biomass difference by site code /treatment  / treatment year
 biomassResp <- nutnetRel %>%
   filter(year_trt!=0)%>%
   group_by(site_code, year_trt, trt)%>%
-  summarise(live_mass_mean=mean(live_mass))%>%
-  ungroup()%>%
-  spread(key=trt, value=live_mass_mean)%>%
+  summarise(live_mass_mean=mean(live_mass)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = trt, 
+              values_from = live_mass_mean) %>%
   mutate(NPK_diff=(NPK-Control)/Control, 
          N_diff=(N-Control)/Control, 
          NP_diff=(NP-Control)/Control,
@@ -298,6 +307,7 @@ biomassResp <- nutnetRel %>%
   pivot_longer(-c(site_code, year_trt), names_to = "trt", values_to = "diff")
 
 
+# Aggregate the biomass difference over all sites, recording their standard error.
 biomassResp_summary <- barGraphStats(data=biomassResp, 
                                      variable="diff", 
                                      byFactorNames=c("year_trt", "trt"))
@@ -315,17 +325,62 @@ biomassResp_summary <- barGraphStats(data=biomassResp,
 
 
 
+
+  
+
+```
+
+### same plot as above, but for richness
+```{r}
+rich_by_siteTrtYr <- nutnetRel %>%
+  filter(year_trt!=0)%>%
+  group_by(site_code, year_trt, trt)%>%
+  summarise(rich_mean=mean(rich)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = trt, 
+              values_from = rich_mean) %>%
+  mutate(NPK_diff=(NPK-Control)/Control, 
+         N_diff=(N-Control)/Control, 
+         NP_diff=(NP-Control)/Control,
+         #NP_diff=(NP+Fence-Control)/Control,
+         Fence_diff = (Fence - Control)/Control,
+         NPKFence_diff = (`NPK+Fence` - Control)/Control)%>%
+  select(site_code, year_trt, NPK_diff, N_diff, NP_diff, Fence_diff, NPKFence_diff)%>%
+  na.omit()%>%
+  #gather(key=trt, value=diff, NPK_diff:NPKFence_diff)%>%
+  pivot_longer(-c(site_code, year_trt), names_to = "trt", values_to = "diff")
+
+
+# Aggregate the biomass difference over all sites, recording their standard error.
+rich_by_trtYr <- barGraphStats(data= rich_by_siteTrtYr,
+                               variable="diff", 
+                               byFactorNames=c("year_trt", "trt"))
+
+(rich_by_trtyr_fig <- ggplot(rich_by_trtYr, 
+                         aes(x=year_trt, y=mean, color=trt)) +
+    geom_point(size=3) +
+    stat_smooth(method = "lm", formula = y ~ x + I(x^2), alpha = 0.2) +
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, alpha = 0.5) +
+    xlab('Treatment Year') + ylab('Richness Difference (%)') +
+    geom_hline(yintercept=0) + 
+    scale_color_discrete(name = "Treatment", labels = c("Fence", "N", "NP", "NPK", "NPK+Fence"))
+  
+)
+
+
 ```
 
 
 
+
 ### Plot b from Predict: Richness Difference (%) by DIGroup
-* The boxplots are over all sites, and we're averaging over all years != 0
-* Need to check computation of these. Based on the plot above to compute difference 
+* The boxplots are over all sites and all treatment years
+* plots the whole distibution of the data.
 ```{r slide7}
-## What's are the points in the boxplot??  plot year
-richness_diff_di <- nutnetRel %>%
-  filter(year_trt!=0)%>%
+# the spread will create NAs when there is not a particular combination of that (site, trt, DIgroup). It's ok because we just ignore these anyways.
+rich_diff_DItrtSite <- nutnetRel %>%
+  filter(year_trt!=0,
+         !is.na(DIgroup)) %>%
   group_by(trt, site_code, DIgroup)%>%
   summarise(live_rich_mean=mean(rich))%>%
   ungroup()%>%
@@ -337,35 +392,49 @@ richness_diff_di <- nutnetRel %>%
          Fence_diff = (Fence - Control)/Control*100,
          NPKFence_diff = (`NPK+Fence` - Control)/Control*100)%>%
   select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff, `NPK+Fence` = NPKFence_diff)%>%
-  na.omit()%>%
   gather(key=trt, value=diff, NPK:`NPK+Fence`)
 
+# Use this if you want to form the boxed based on standard errors (like in the plots above.)
+# the simple boxplot plots all the way from the max to the min (the entire distribution of sites)
+# rich_diff_DItrt <- rich_diff_DItrtSite %>% 
+#   group_by(trt, DIgroup) %>% 
+#   summarize(N = n(), 
+#             mean = mean(diff, na.rm = T), 
+#             sd = sd(diff, na.rm =T)) %>% 
+#   ungroup() %>% 
+#   mutate(se = sd / sqrt(N))
 
-ggplot(richness_diff_di) + 
-  geom_boxplot(aes(x = trt, y = diff, fill = DIgroup)) + 
+
+# note: na.rm = T says that unseen combinations of the data are to be ignored
+  # this might have to be reconciled with the biotime plots, where we use the unseen combos of the datas as zeroes to generate the response "lost" variable.
+
+ggplot(rich_diff_DItrtSite) + 
+  geom_boxplot(aes(x = trt, y = diff, fill = DIgroup), na.rm= T) + 
   geom_hline(yintercept = 0) + 
-  lims(y = c(-1,2)) + 
   labs(title = "Richness by Treatment, over all Sites",
        y = "Richness Difference (%)",
        x = "Treatment")
+
 
 ```
 
 
 ### Plot c from Predict. Abundance Diff (%) by DI Group
+* rel cover = abundance ?
+* crazy outliers
 ```{r slide8}
 abund_diff_di <- nutnetRel %>%
   filter(year_trt!=0)%>%
   group_by(trt, site_code, DIgroup)%>%
-  summarise(live_abund_mean=mean(DI))%>%
+  summarise(live_abund_mean=mean(rel_cover)) %>%
   ungroup()%>%
   spread(key=trt, value=live_abund_mean)%>%
-  mutate(NPK_diff=(NPK-Control)/Control, 
-         N_diff=(N-Control)/Control, 
-         NP_diff=(NP-Control)/Control,
+  mutate(NPK_diff=(NPK-Control)/Control * 100, 
+         N_diff=(N-Control)/Control * 100, 
+         NP_diff=(NP-Control)/Control * 100,
          #NP_diff=(NP+Fence-Control)/Control,
-         Fence_diff = (Fence - Control)/Control,
-         NPKFence_diff = (`NPK+Fence` - Control)/Control)%>%
+         Fence_diff = (Fence - Control)/Control * 100,
+         NPKFence_diff = (`NPK+Fence` - Control)/Control * 100)%>%
   select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff, `NPK+Fence` = NPKFence_diff)%>%
   na.omit()%>%
   gather(key=trt, value=diff, NPK:`NPK+Fence`)
@@ -373,10 +442,10 @@ abund_diff_di <- nutnetRel %>%
 ggplot(abund_diff_di) + 
   geom_boxplot(aes(x = trt, y = diff, fill = DIgroup)) + 
   geom_hline(yintercept = 0) + 
-  lims(y = c(-1,2)) + 
   labs(title = "Abundance by Treatment, over all Sites",
        y = "Abundance Difference (%)",
        x = "Treatment")
+
 
 
 
