@@ -203,8 +203,9 @@ nutnetRel %>%
     * Q: Is this what we want?
 ```{r slide4, cache = T}
 # aggregate over taxon
-biomass_by_trt <- nutnetPlot %>%
-  filter(year_trt != 0) %>%
+biomass_by_trt <- nutnetRel %>%
+  filter(trt %in% c("Control", trt_of_interest),
+         year_trt != 0) %>%
   group_by(site_code, year_trt, trt, plot) %>% 
   summarize(mean_rich = mean(rich),
             mean_mass = mean(live_mass))
@@ -222,17 +223,17 @@ biomass_by_trt <- nutnetPlot %>%
     ylim(c(4,6.5))
 )
 
-# linear trendlines
-(biotime_plot1_lm <- ggplot(biomass_by_trt, aes(x=log(mean_rich), y=log(mean_mass), color=trt)) + 
-    #guides(color = "none") +
-    geom_point(alpha = 0.01) +
-    geom_smooth(method='lm', alpha=0.3, lwd=1.3, se=T) +
-    #geom_smooth(pred_bef_fix, method='lm', mapping=aes(y=fit), color="black", lwd=1.5) +
-    labs(x = "Log Richness",
-         y = "Log Biomass",
-         title = "Biomass vs Richness by Treatment (Linear Trendlines)") + 
-    ylim(c(4,6.5))
-)
+# # linear trendlines
+# (biotime_plot1_lm <- ggplot(biomass_by_trt, aes(x=log(mean_rich), y=log(mean_mass), color=trt)) + 
+#     #guides(color = "none") +
+#     geom_point(alpha = 0.01) +
+#     geom_smooth(method='lm', alpha=0.3, lwd=1.3, se=T) +
+#     #geom_smooth(pred_bef_fix, method='lm', mapping=aes(y=fit), color="black", lwd=1.5) +
+#     labs(x = "Log Richness",
+#          y = "Log Biomass",
+#          title = "Biomass vs Richness by Treatment (Linear Trendlines)") + 
+#     ylim(c(4,6.5))
+# )
 
 ```
 
@@ -243,7 +244,7 @@ Nathan's attempt at plot 2. plotting # lost / number species, each point is YEAR
 # Create a table of summary statistics for each year within a treatment and DIgroup
   # The idea is to get the number of lost taxon for each grouping.
 prop_lost_by_yrTrtDI <- nutnetdf_allspp %>%
-  filter(trt %in% c("N", "NP", "NPK", "NPK+Fence", "Fence"),
+  filter(trt %in% c("Control", trt_of_interest),
          year_trt > 0,            # we don't want to say something was lost if it was never there.
          !is.na(DIgroup)) %>%     # DI group was defined at pretreatment levels, so DI group NA means 
                                       # we didn't have pretreatment info.
@@ -295,9 +296,9 @@ biomassResp <- nutnetRel %>%
   ungroup() %>%
   pivot_wider(names_from = trt, 
               values_from = live_mass_mean) %>%
-  mutate(NPK_diff=(NPK-Control)/Control, 
-         N_diff=(N-Control)/Control, 
-         NP_diff=(NP-Control)/Control,
+  mutate(NPK_diff=(NPK-Control)/Control*100, 
+         N_diff=(N-Control)/Control*100, 
+         NP_diff=(NP-Control)/Control*100,
          #NP_diff=(NP+Fence-Control)/Control,
          Fence_diff = (Fence - Control)/Control,
          NPKFence_diff = (`NPK+Fence` - Control)/Control)%>%
@@ -572,6 +573,37 @@ year0_ranef_pred <- cbind(newdata_year0, year0_pred)
 
 ```
 
+Including rank * treatment interaction
+```{r}
+year0_model_interaction <- glmer(lost_at_end ~ rel_rank_year0*trt + (1|site_code/plot) + (1|Taxon),
+                   data = modeling_data_year0,
+                   family = "binomial",
+                   control = glmerControl(optimizer = "bobyqa"))
+year0_pred_interaction <- predictInterval(year0_model_interaction,
+                          newdata=newdata_year0,
+                          which="fixed", type="probability",
+                          include.resid.var = FALSE)
+#get ranef predictions
+year0_ranef_pred_interaction <- cbind(newdata_year0, year0_pred_interaction)
+
+#replot with raw data and model predictions
+(missing_at_end_interaction <- ggplot() +
+    # geom_point(position=position_jitter(width=0.05, height=0.05),
+    #            alpha=0.2, color="grey") +
+    geom_smooth(data = year0_ranef_pred_interaction,
+                mapping=aes(x = rel_rank_year0, y=fit, group=trt, color = trt)
+                #,lwd=0.4, alpha=0.4, color="lightgrey"
+    ) + 
+    geom_ribbon(data = year0_ranef_pred_interaction, 
+                mapping = aes(x = rel_rank_year0,  #group = trt,
+                              fill = factor(trt),
+                              ymin = lwr, ymax = upr), alpha = 0.3,
+                show.legend = FALSE) + 
+    ylab("Probability of Being\n Missing at End") +
+    xlab("Relative Rank at 1st Time Step\n(Rare to Common)")
+)
+
+```
 
 
 
