@@ -178,12 +178,19 @@ richness_taxon <- nutnetRel%>%
   summarise(richness_adapt=length(unique(Taxon)))%>%
   ungroup()
 
+# Richness only using the full-cover data.
+richness_cover_only <- read_csv(here("input-data", "full-cover-09-April-2018.csv")) %>%
+  filter(live==1, Family!='NULL')%>%
+  group_by(year_trt, site_code, plot)%>%
+  summarise(richness_adapt=length(unique(Taxon)))%>%
+  ungroup()
 
 #### Compare with the nutnet built in version. They still don't match
 nutnetRel %>%
   select(year_trt, site_code, plot, trt, rich) %>%
   inner_join(richness_raw, by = c("year_trt", "site_code", "plot", "trt")) %>%
   inner_join(richness_taxon, by = c("year_trt", "site_code")) %>%
+  inner_join(richness_cover_only, by = c("year_trt", "site_code")) %>%
   filter(richness_og != rich | richness_adapt != rich | richness_og != richness_adapt)
   #filter(!isTRUE(all.equal(rich, richness_og, richness_adapt)))
 
