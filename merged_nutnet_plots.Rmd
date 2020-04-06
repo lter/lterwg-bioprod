@@ -182,7 +182,7 @@ richness_taxon <- nutnetRel%>%
 richness_cover_only <- read_csv(here("input-data", "full-cover-09-April-2018.csv")) %>%
   filter(live==1, Family!='NULL')%>%
   group_by(year_trt, site_code, plot)%>%
-  summarise(richness_adapt=length(unique(Taxon)))%>%
+  summarise(richness_cover_only=length(unique(Taxon)))%>%
   ungroup()
 
 #### Compare with the nutnet built in version. They still don't match
@@ -332,6 +332,18 @@ biomassResp_summary <- barGraphStats(data=biomassResp,
 )
 
 
+trt_names <- c("Fence_diff" = "Fence", "N_diff" = "N", "NP_diff" = "NP", "NPK_diff"= "NPK", "NPKFence_diff" = "NPK+Fence")
+(badBiomassFig_bypanel <- ggplot(biomassResp_summary, 
+                         aes(x=year_trt, y=mean)) +
+    geom_point(size=3) +
+    stat_smooth(method = "lm", formula = y ~ x + I(x^2), alpha = 0.4) +
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, alpha = 0.5) +
+    xlab('Treatment Year') + ylab('Biomass Difference (%)') +
+    geom_hline(yintercept=0) + 
+    facet_wrap(~trt, labeller = as_labeller(trt_names))
+  
+)
+
 
 
   
@@ -446,10 +458,12 @@ abund_diff_di_wide <- nutnetRel %>%
          Fence_diff = (Fence - Control)/Control * 100,
          NPKFence_diff = (`NPK+Fence` - Control)/Control * 100)
 
+# there are pretty nasty outliers which make the plot hard to read. remove if > 5 MAD
 abund_diff_di_long <- abund_diff_di_wide %>%
   select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff, `NPK+Fence` = NPKFence_diff)%>%
   gather(key=trt, value=diff, NPK:`NPK+Fence`) %>%
-  na.omit()
+  na.omit() %>%
+  filter(abs(diff) <= 5*mad(diff))
 
 ggplot(abund_diff_di_long) + 
   geom_boxplot(aes(x = trt, y = diff, fill = DIgroup)) + 
