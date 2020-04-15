@@ -28,8 +28,29 @@ library(patchwork)  # for combining plots
 
 registerDoParallel()
 
+# read in the cover and comb datasets to merge . only pull out the columns we're intersted in
+cover_april2020 <- read_csv(here("output-data", "NutNet_FullCoverData_ProcessedApril2020.csv")) %>%
+  select(site_name, site_code, year_trt, trt, plot, Taxon, DIgroup, DIgroup2, RelAbund_group, RelAbund_group2, DI,
+         totplotcover.yr.live, max_cover, live, Family, rel_abundance_year0)
+comb_april2018 <- read_csv(here("input-data", "comb-by-plot-clim-soil-diversity-09-Apr-2018.csv")) %>%
+  select(site_code, year_trt, plot, rich, live_mass)
+
+
+# is left join correct? maybe inner join is better.. cover has the taxon, so is at the more coarse level
+  # just kidding they're the same on this data.
+# filter to only get sites with at least 5 treatment years.
+# filter to also get rid of comp.pt site, since it has problems with pretreatment data
+nutnetdf <- left_join(cover_april2020, comb_april2018, by = c("site_code", "plot", "year_trt")) %>%
+  group_by(site_code) %>%
+  filter(n_distinct(year_trt) >= 5, site_code != "comp.pt") %>%
+  ungroup
+```
+
+
+Old way of reading in data (when we were given the merged dataset straight up. now we generate it in the first chunk)
+```{r deprecated, eval = FALSE, include=FALSE}
 ## Reading in data
-nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019_old.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
+nutnetdf_old_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019_old.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
   # for Doane College Spring Creek Prarie, there's an extra space
   # nh 2/2/20: join is messed up because of this. need to fix.
   mutate(site_name.y = str_trim(site_name.y)) %>%
@@ -38,7 +59,7 @@ nutnetdf_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019_old.csv"), st
 
 # Getting rid of identical, duplicate columns
 # removing problematic site code comp.pt
-nutnetdf <- nutnetdf_raw %>%
+nutnetdf_old <- nutnetdf_raw %>%
   select(-c(block.y, site_name.y, trt.y,  year_trt.y)) %>%
   rename(block = "block.x", site_name = "site_name.x", trt= "trt.x", year_trt = "year_trt.x") %>%
   filter(site_code !="comp.pt")
@@ -46,17 +67,20 @@ nutnetdf <- nutnetdf_raw %>%
 
 # pick out only the columns we're interested in
 # this will help me figure out what I'm actually using.
-nutnetdf_used <- nutnetdf %>%
+nutnetdf_old_used <- nutnetdf_old %>%
   select(site_name, site_code, year_trt, trt, plot, Taxon, DIgroup, DI,
          totplotcover.yr.live, max_cover, live, Family, rich, live_mass,
          rel_abundance_year0)
+```
 
-nutnetdf_full <- nutnetdf_used %>%
-  mutate(rel_cover = (max_cover/totplotcover.yr.live )*100) %>%
-  as_tibble()
+```{r}
+# add column for relative cover
+nutnetdf <- nutnetdf %>%
+  mutate(rel_cover = (max_cover/totplotcover.yr.live )*100) #%>%
+  #as_tibble()
 
 # The plots will focus on live biomass, so this will be our base dataset.
-nutnetRel <- nutnetdf_full %>%
+nutnetRel <- nutnetdf %>%
   filter(live == 1) 
 
 # this will come in handy when we're actually plotting the data.
@@ -65,8 +89,12 @@ nutnetPlot <- nutnetRel %>%
 
 
 # get the digroup to merge in with everything else later
-di_groups <- nutnetRel %>%
+di1_groups <- nutnetRel %>%
   select(site_code, plot, Taxon, DIgroup) %>%
+  distinct()
+
+di2_groups <- nutnetRel %>%
+  select(site_code, plot, Taxon, DIgroup2) %>%
   distinct()
 
 # Our data doesn't come with any rows where abundance is zero, 
@@ -398,22 +426,46 @@ rich_by_trtYr <- barGraphStats(data= rich_by_siteTrtYr,
 * The boxplots are over all sites and all treatment years
 * plots the whole distibution of the data.
 ```{r slide7}
-# the spread will create NAs when there is not a particular combination of that (site, trt, DIgroup). It's ok because we just ignore these anyways.
-rich_diff_DItrtSite <- nutnetRel %>%
-  filter(year_trt!=0,
-         !is.na(DIgroup)) %>%
-  group_by(trt, site_code, DIgroup)%>%
-  summarise(live_rich_mean=mean(rich))%>%
-  ungroup()%>%
-  spread(key=trt, value=live_rich_mean)%>%
-  mutate(NPK_diff=(NPK-Control)/Control*100, 
-         N_diff=(N-Control)/Control*100, 
-         NP_diff=(NP-Control)/Control*100,
-         #NP_diff=(NP+Fence-Control)/Control,
-         Fence_diff = (Fence - Control)/Control*100,
-         NPKFence_diff = (`NPK+Fence` - Control)/Control*100)%>%
-  select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff, `NPK+Fence` = NPKFence_diff)%>%
-  gather(key=trt, value=diff, NPK:`NPK+Fence`)
+#' @param metric is a string, a numeric variable name (ie rich, relative cover)
+#' @param grouping is a string, name of a variable defining groups (ie DIgroup, AbundGroup)
+#' @param remove_outliers is a logical flag to determine whether to remove observations further than 5 MAD
+metric_diff_by_group <- function(metric, grouping, remove_outliers = FALSE){
+  metric <- sym(metric)
+  grouping <- sym(grouping)
+  
+  # the spread will create NAs when there is not a particular combination of that (site, trt, DIgroup). It's ok because we just ignore these anyways.
+  metric_diff_DItrtSite <- nutnetRel %>%
+    filter(year_trt!=0,
+           !is.na(!!grouping)) %>%
+    group_by(trt, site_code, !!grouping)%>%
+    summarise(live_metric_mean=mean(!!metric))%>%
+    ungroup()%>%
+    spread(key=trt, value=live_metric_mean)%>%
+    mutate(NPK_diff=(NPK-Control)/Control*100, 
+           N_diff=(N-Control)/Control*100, 
+           NP_diff=(NP-Control)/Control*100,
+           #NP_diff=(NP+Fence-Control)/Control,
+           Fence_diff = (Fence - Control)/Control*100,
+           NPKFence_diff = (`NPK+Fence` - Control)/Control*100)%>%
+    select(grouping, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff, `NPK+Fence` = NPKFence_diff)%>%
+    gather(key=trt, value=diff, NPK:`NPK+Fence`)
+  
+  if(remove_outliers){
+    metric_diff_DItrtSite <- metric_diff_DItrtSite %>%
+      filter(abs(diff) <= 5 * mad(diff,na.rm = TRUE))
+  }
+  
+  # note: na.rm = T says that unseen combinations of the data are to be ignored
+    # this might have to be reconciled with the biotime plots, where we use the unseen combos of the datas as zeroes to generate the response "lost" variable.
+  
+  ggplot(metric_diff_DItrtSite) + 
+    geom_boxplot(aes(x = trt, y = diff, fill = !!grouping), na.rm= T) + 
+    geom_hline(yintercept = 0) + 
+    theme(axis.text.x = element_text(size = 12))
+  
+
+}
+
 
 # Use this if you want to form the boxed based on standard errors (like in the plots above.)
 # the simple boxplot plots all the way from the max to the min (the entire distribution of sites)
@@ -429,14 +481,44 @@ rich_diff_DItrtSite <- nutnetRel %>%
 # note: na.rm = T says that unseen combinations of the data are to be ignored
   # this might have to be reconciled with the biotime plots, where we use the unseen combos of the datas as zeroes to generate the response "lost" variable.
 
-ggplot(rich_diff_DItrtSite) + 
-  geom_boxplot(aes(x = trt, y = diff, fill = DIgroup), na.rm= T) + 
-  geom_hline(yintercept = 0) + 
-  labs(title = "Richness by Treatment, over all Sites",
-       y = "Richness Difference (%)",
-       x = "Treatment") + 
-  theme(axis.text.x = element_text(size = 12))
 
+
+(rich_trt_di1 <- metric_diff_by_group("rich", "DIgroup") + 
+  labs(title = "Richness by Treatment, over all Sites",
+       subtitle = "DI group 1",
+       y = "Richness Difference (%)",
+       x = "Treatment")
+)
+
+
+
+(rich_trt_di2 <- metric_diff_by_group("rich", "DIgroup2") + 
+  labs(title = "Richness by Treatment, over all Sites",
+       subtitle = "DI group 2",
+       y = "Richness Difference (%)",
+       x = "Treatment")
+)
+
+rich_trt_di1 + rich_trt_di2 + plot_layout(guides = "collect")
+
+```
+
+
+Same thing for abundance groupings
+```{r}
+rich_relAbund1 <- metric_diff_by_group("rich", "RelAbund_group") + 
+  labs(title = "Richness by Treatment, over all Sites",
+       subtitle = "Rel Abund Group 1",
+       y = "Richness Difference (%)",
+       x = "Treatment")
+
+rich_relAbund2 <- metric_diff_by_group("rich", "RelAbund_group2") + 
+  labs(title = "Richness by Treatment, over all Sites",
+       subtitle = "Rel Abund Group 2",
+       y = "Richness Difference (%)",
+       x = "Treatment")
+
+rich_relAbund1 + rich_relAbund2 + plot_layout(guides = "collect")
 
 ```
 
@@ -445,33 +527,23 @@ ggplot(rich_diff_DItrtSite) +
 * rel cover = abundance ?
 * crazy outliers
 ```{r slide8}
-abund_diff_di_wide <- nutnetRel %>%
-  filter(year_trt!=0)%>%
-  group_by(trt, site_code, DIgroup)%>%
-  summarise(live_abund_mean=mean(rel_cover)) %>%
-  ungroup()%>%
-  spread(key=trt, value=live_abund_mean)%>%
-  mutate(NPK_diff=(NPK-Control)/Control * 100, 
-         N_diff=(N-Control)/Control * 100, 
-         NP_diff=(NP-Control)/Control * 100,
-         #NP_diff=(NP+Fence-Control)/Control,
-         Fence_diff = (Fence - Control)/Control * 100,
-         NPKFence_diff = (`NPK+Fence` - Control)/Control * 100)
 
-# there are pretty nasty outliers which make the plot hard to read. remove if > 5 MAD
-abund_diff_di_long <- abund_diff_di_wide %>%
-  select(DIgroup, NPK = NPK_diff, N = N_diff, NP = NP_diff, Fence = Fence_diff, `NPK+Fence` = NPKFence_diff)%>%
-  gather(key=trt, value=diff, NPK:`NPK+Fence`) %>%
-  na.omit() %>%
-  filter(abs(diff) <= 5*mad(diff))
-
-ggplot(abund_diff_di_long) + 
-  geom_boxplot(aes(x = trt, y = diff, fill = DIgroup)) + 
-  geom_hline(yintercept = 0) + 
+(abund_trt_di1 <- metric_diff_by_group("rel_cover", "DIgroup", remove_outliers = TRUE) + 
   labs(title = "Abundance by Treatment, over all Sites",
+       subtitle = "DI Group 1",
        y = "Abundance Difference (%)",
-       x = "Treatment") +
-  theme(axis.text.x = element_text(size = 12))
+       x = "Treatment")
+)  
+
+
+(abund_trt_di2 <- metric_diff_by_group("rel_cover", "DIgroup", remove_outliers = TRUE) + 
+  labs(title = "Abundance by Treatment, over all Sites",
+       subtitle = "DI Group 2",
+       y = "Abundance Difference (%)",
+       x = "Treatment")
+)  
+abund_trt_di1 / abund_trt_di2 + plot_layout(guides = "collect")
+
 
 
 #outlier_exploration
@@ -488,6 +560,25 @@ abund_diff_di_wide %>%
 
 ```
 
+Same thing for relative abundance groupings
+```{r}
+(abund_trt_relAbund1 <- metric_diff_by_group("rel_cover", "RelAbund_group", remove_outliers = T) + 
+  labs(title = "Abundance by Treatment, over all Sites",
+       subtitle = "Rel Abund Group 1",
+       y = "Abundance Difference (%)",
+       x = "Treatment")
+)  
+
+
+(abund_trt_relAbund2 <- metric_diff_by_group("rel_cover", "RelAbund_group2", remove_outliers = T) + 
+  labs(title = "Abundance by Treatment, over all Sites",
+       subtitle = "Rel Abund Group 2",
+       y = "Abundance Difference (%)",
+       x = "Treatment")
+)  
+abund_trt_relAbund1 / abund_trt_relAbund2 + plot_layout(guides = "collect")
+
+```
 
 
 ### Plot b from Biotime: Probability missing at the end ~ Relative Pretreatment Rank
