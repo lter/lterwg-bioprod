@@ -17,6 +17,7 @@ library(DHARMa)
 library(car)
 library(piecewiseSEM)
 library(AICcmodavg)
+library(here)
 
 ###
 
@@ -31,9 +32,9 @@ theme_set(theme_bw(base_size=17) +
 add_year <- function(x) paste(x,"years", sep=" ")
 
 #### Load data ####
-load(file="../derived_data/biotime_loss_summary.Rdata")
+load(file=here("species_loss_gains_biotime", "derived_data", "biotime_loss_summary.Rdata"))
 
-load(file="../derived_data/biotime_sum_abund.Rdata")
+load(file=here("species_loss_gains_biotime", "derived_data", "biotime_sum_abund.Rdata"))
 
 biotime_loss_summary_filtered <- biotime_loss_summary %>%
   filter(N_YEARS>=3) %>%
@@ -109,8 +110,11 @@ pred_final_loss_ranef <- cbind(newdata, predictInterval(mod_final_loss,
 
 
 #replot with raw data and model predictions
+
+# Make sure we remove Biomass rows
 jpeg("../figures/effect_of_rarity_on_final_loss.jpg")
-missing_at_end <- ggplot(biotime_loss_summary_filtered,
+missing_at_end <- ggplot(biotime_loss_summary_filtered %>%
+                           filter(MEASURE == "Abundance"),
        aes(x=REL_RANK_T0, y=lost_at_end, group=as.character(STUDY_ID))) +
   geom_point(position=position_jitter(width=0.05, height=0.05),
              alpha=0.2, color="grey") +
@@ -124,6 +128,11 @@ missing_at_end <- ggplot(biotime_loss_summary_filtered,
   xlab("Relative Rank at 1st Time Step\n(Rare to Common)")
 missing_at_end
 dev.off()
+
+
+
+
+
 
 #---------------------------------------------------------------------------------------
 # Does initial rarity affect fraction of the timeseries you are missing ? ####
