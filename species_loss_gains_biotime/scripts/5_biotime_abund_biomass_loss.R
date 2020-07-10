@@ -20,13 +20,14 @@ library(lme4)
 library(DHARMa)
 library(merTools)
 library(modelr)
+library(here)
 
 theme_set(theme_bw(base_size = 16))
 
 #biotime####
 #read in full biotime dataset
 #load(file="../derived_data/biotime_abund.Rdata")
-load(file="../derived_data/biotime_sum_abund.Rdata")
+load(file= here("species_loss_gains_biotime", "derived_data", "biotime_sum_abund.Rdata"))
 
 biotime_duo <- biotime_sum_abund %>%
   group_by(STUDY_ID) %>%
@@ -81,6 +82,7 @@ biotime_duo_reshape <- biotime_duo %>%
          present_t1_t3 = sum(Abundance[1:3]!=0) == 3) %>%
   ungroup()
     
+
 #BEF ####
 ggplot(biotime_duo_reshape, 
        mapping = aes(x = log(Abundance+1), y = log(Biomass+1), color = factor(STUDY_ID))) +
@@ -222,6 +224,74 @@ plot_fit_loss_mod <- ggplot() +
   ylab("Probability of Loss at Time T")
 plot_fit_loss_mod
 ggsave("../figures/loss_size_abund_rank_model.jpg")
+
+
+
+
+### Probability of  missing at end, grouped by rel_percapita_bioamss rank ---------------
+
+# mostly adapted from models above. 
+
+# add lost_at_end and relative rank at time 0
+biotime_duo_reshape_lost_at_end <- biotime_duo_reshape %>%
+  group_by(STUDY_ID, GENUS_SPECIES) %>%
+  mutate(lost_at_end = dplyr::last(Abundance, order_by = YEAR) == 0,
+         rel_abund_rank_t0 = dplyr::first(rel_abund_rank, order_by = YEAR),
+         rel_percapita_biomass_rank_t0 = dplyr::first(rel_percapita_biomass_rank, order_by = YEAR)) %>%
+  # these columns will be the same within a study_id/genus species
+  # so we only need to keep 1 time step. so we slice.
+  slice(1) %>%
+  ungroup() %>%
+  filter(!is.na(rel_percapita_biomass_rank))
+
+
+loss_end_mod <- glmer(lost_at_end ~ rel_abund_rank_t0*rel_percapita_biomass_rank +
+                        (1|GENUS_SPECIES) +
+                        (1 |STUDY_ID),
+                      data = biotime_duo_reshape_lost_at_end%>% filter(rel_abund_rank_t0 != 0),
+                      family = "binomial")
+
+piecewiseSEM::rsquared(loss_end_mod)
+car::Anova(loss_end_mod)
+summary(loss_end_mod)
+
+plot(simulateResiduals(fittedModel = loss_end_mod, n = 250))
+
+newdata_end <- crossing(rel_abund_rank_t0 = seq(0,1,length.out=n),
+                    tibble(rel_percapita_biomass_rank = c(0.125, 0.375, 0.625, 0.875),
+                           size_split = f),
+                    biotime_duo %>%
+                      group_by(STUDY_ID, GENUS_SPECIES) %>%
+                      slice(1L) %>%
+                      ungroup() %>%
+                      sample_n(50)) #%>%
+                      #dplyr::select(STUDY_ID, GENUS_SPECIES) %>% slice(1L))
+
+loss_end_pred_fix <- predictInterval(loss_end_mod,
+                                     newdata=newdata_end,
+                                     which="fixed", type="probability",
+                                     include.resid.var = FALSE)
+
+loss_end_pred_fix <- cbind(newdata_end, loss_end_pred_fix)
+
+ggplot() +
+  geom_line(data = loss_end_pred_fix,
+            mapping = aes(x = rel_abund_rank_t0, y = fit, group = size_split,
+                          color = factor(rel_percapita_biomass_rank)),
+            size = 2) +
+  scale_color_viridis_d(guide = guide_legend(title = "Relative\nSize Rank\nAt First Time Step"),
+                        option = "D") +
+  scale_fill_viridis_d(guide = guide_legend(title = "Relative\nSize Rank\nAt First Time Step"),
+                       option = "D") +
+  geom_ribbon(data = loss_end_pred_fix,
+              mapping = aes(x = rel_abund_rank_t0,  group = size_split,
+                            fill = factor(rel_percapita_biomass_rank),
+                            ymin = lwr, ymax = upr), alpha = 0.3) +
+  ylab("Probability of Being\n Missing at End") +
+  xlab("Relative Rank at 1st Time Step\n(Rare to Common)")
+
+
+
 
 
 #The things we save...

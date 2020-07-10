@@ -44,7 +44,16 @@ biomass_timeseries <- ggplot(biotime_biomass,
   guides(color = "none") +
   xlab("") + ylab("Log Total Biomass + 1")
 biomass_timeseries
-ggsave("../figures/biomass_change_over_time.jpg")
 
-saveRDS(list(biomass_timeseries = biomass_timeseries),
-        file = "../derived_data/6_biomass_timeseries.Rds")  
+# same as above, but add an overall trend line (locally linear in this case)
+(biomass_timeseries_overall <- ggplot(biotime_biomass, aes(x = YEAR, y = log(B+1))) +
+    geom_smooth(color = "black", alpha = 0.2, size = 1.5) + 
+    geom_line(aes(color = factor(STUDY_ID)), size = 0.7) +
+    guides(color = "none") +
+    xlab("") + ylab("Log Total Biomass + 1")
+)
+
+#ggsave("../figures/biomass_change_over_time.jpg")
+
+# saveRDS(list(biomass_timeseries = biomass_timeseries),
+#         file = "../derived_data/6_biomass_timeseries.Rds")  
