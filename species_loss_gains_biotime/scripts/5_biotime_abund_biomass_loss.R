@@ -228,9 +228,9 @@ ggsave("../figures/loss_size_abund_rank_model.jpg")
 
 
 
-### NATHAN begin fooling around -- plot c but with the axes of plot b
-# Prob missing at end split by rel_percapita_bioamss rank
+### Probability of  missing at end, grouped by rel_percapita_bioamss rank ---------------
 
+# mostly adapted from models above. 
 
 # add lost_at_end and relative rank at time 0
 biotime_duo_reshape_lost_at_end <- biotime_duo_reshape %>%
@@ -257,7 +257,6 @@ summary(loss_end_mod)
 
 plot(simulateResiduals(fittedModel = loss_end_mod, n = 250))
 
-#  still wondering if the extra slice is typo.... commented out for now and replace with a random sample of 50
 newdata_end <- crossing(rel_abund_rank_t0 = seq(0,1,length.out=n),
                     tibble(rel_percapita_biomass_rank = c(0.125, 0.375, 0.625, 0.875),
                            size_split = f),
@@ -293,8 +292,6 @@ ggplot() +
 
 
 
-
-### NATHAN end fooling
 
 
 #The things we save...

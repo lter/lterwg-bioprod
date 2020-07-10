@@ -11,11 +11,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 ### Reading in Data
-* Removed the site `comp.pt`
-* filtered for `live ==1`
-* computed relative cover as $\frac{\text{max cover}}{\text{totplotcover.yr.live} \times 100}$
+* Removed the site `comp.pt` because the pretreatment data seems to have errors
+* Only look at sites with at least 5 treatment years
 
-_Note:_ The new data Laura sent us (as of 12/12/19) is missing all of the treatments for live == 1. The code will run using the original merged data provided to us (we have it named `merged_NutNet_Oct2019_old.csv`).
 ```{r data, warning=FALSE, message=FALSE, cache = T}
 # for biotime mixed effects models
 library(merTools) 
@@ -36,8 +34,6 @@ comb_april2018 <- read_csv(here("input-data", "comb-by-plot-clim-soil-diversity-
   select(site_code, year_trt, plot, rich, live_mass)
 
 
-# is left join correct? maybe inner join is better.. cover has the taxon, so is at the more coarse level
-  # just kidding they're the same on this data.
 # filter to only get sites with at least 5 treatment years.
 # filter to also get rid of comp.pt site, since it has problems with pretreatment data
 nutnetdf <- left_join(cover_april2020, comb_april2018, by = c("site_code", "plot", "year_trt")) %>%
@@ -46,32 +42,8 @@ nutnetdf <- left_join(cover_april2020, comb_april2018, by = c("site_code", "plot
   ungroup
 ```
 
-
-Old way of reading in data (when we were given the merged dataset straight up. now we generate it in the first chunk)
-```{r deprecated, eval = FALSE, include=FALSE}
-## Reading in data
-nutnetdf_old_raw <-read.csv(here("output-data", "merged_NutNet_Oct2019_old.csv"), stringsAsFactors = FALSE, colClasses = c("site_code" = "factor")) %>%
-  # for Doane College Spring Creek Prarie, there's an extra space
-  # nh 2/2/20: join is messed up because of this. need to fix.
-  mutate(site_name.y = str_trim(site_name.y)) %>%
-  # Equality is messed up for all taxon when DI when site_code == bogong.au, plot == 3, due to different precision levels
-  mutate_if(is.numeric, ~round(.x, digits = 7))
-
-# Getting rid of identical, duplicate columns
-# removing problematic site code comp.pt
-nutnetdf_old <- nutnetdf_raw %>%
-  select(-c(block.y, site_name.y, trt.y,  year_trt.y)) %>%
-  rename(block = "block.x", site_name = "site_name.x", trt= "trt.x", year_trt = "year_trt.x") %>%
-  filter(site_code !="comp.pt")
-
-
-# pick out only the columns we're interested in
-# this will help me figure out what I'm actually using.
-nutnetdf_old_used <- nutnetdf_old %>%
-  select(site_name, site_code, year_trt, trt, plot, Taxon, DIgroup, DI,
-         totplotcover.yr.live, max_cover, live, Family, rich, live_mass,
-         rel_abundance_year0)
-```
+* filtered for `live ==1`
+* computed relative cover as $\frac{\text{max cover}}{\text{totplotcover.yr.live} \times 100}$
 
 ```{r}
 # add column for relative cover
@@ -116,7 +88,8 @@ nutnetdf_allspp <- nutnetRel %>%
   mutate(PA = ifelse(rel_cover > 0, 1, 0)) %>% # 
   arrange(site_code, plot, Taxon, year_trt) %>%
   select(-data) %>%
-  left_join(di_groups, by = c("site_code", "plot", "Taxon")) #(4)
+  left_join(di1_groups, by = c("site_code", "plot", "Taxon")) %>%
+  left_join(di2_groups, by = c("site_code", "plot", "Taxon")) #(4)
 
 
 trt_of_interest <- c("N", "NP", "NPK", "Fence", "NPK+Fence")
@@ -186,11 +159,13 @@ cumul_zeros <- function(x)  {
 
 
 ### Aside: How to compute Richness?
-Currently, we use the `Rich` column given to us by nutnet (In particular, the dataset `comb-by-plot-clim-soil-diversity-09-Apr-2018.csv`). However, in `NutNet_rare_spp.R`, richness is computed using the `full-biomass-09-June-2017.csv` data. In the code chunk below, we use the merged data (`merged_NutNet_Oct2019.csv`), compute richness using the original method outlined in `NutNet_rare_spp.R`, tweak this method by changing the `group_by`, and compare these two methods to the built in `rich` column.
+Currently, we use the `Rich` column given to us by nutnet (In particular, the dataset `comb-by-plot-clim-soil-diversity-09-Apr-2018.csv`). However, in `NutNet_rare_spp.R`, richness is computed using the `full-biomass-09-June-2017.csv` data. In the code chunk below, we use the merged data (`merged_NutNet_Oct2019.csv`), compute richness using the original method outlined in `NutNet_rare_spp.R`, tweak this method by changing the `group_by`, and compare these two methods to the built in `rich` column. (this isn't particularly important, because we can pretty safely assume NutNet's richness calculation is correct.)
 
 * Neither method for computing richness aligns with `rich`.
     * Q: How is `rich` computed then?
-* The rest of the analysis uses the column `rich`
+    * A: I think the preprocessing we do impacts the richness calculation (eg removing sites with < 5 treatment years). 
+    
+* The rest of the analysis uses the column `rich` from NutNet.
 ```{r}
 ##### Kim's raw version (from NutNet_rare_spp.R). Nathan's only change is moving to the merged data.
 richness_raw <- nutnetRel%>%
@@ -231,11 +206,10 @@ nutnetRel %>%
 ### Plot 1 from `nutnet_rare_spp.R`: Biomass ~ Richness (log scale). 
 * Using `rich` for richness
 * Using `live_mass` for biomass
-* Plotting linear and locally linear trendlines
+* Plotting locally linear trendlines
 * Including only the treatments :Control, N, NP, NPK, Fence, NPK+Fence
 * We take the average richness/live mass over all Taxon
     * Equivalently, this means each point in our plot is a unique site / year / treatment / plot combination
-    * Q: Is this what we want?
 ```{r slide4, cache = T}
 # aggregate over taxon
 biomass_by_trt <- nutnetRel %>%
@@ -257,17 +231,6 @@ biomass_by_trt <- nutnetRel %>%
     ylim(c(4,6.5))
 )
 
-# # linear trendlines
-# (biotime_plot1_lm <- ggplot(biomass_by_trt, aes(x=log(mean_rich), y=log(mean_mass), color=trt)) + 
-#     #guides(color = "none") +
-#     geom_point(alpha = 0.01) +
-#     geom_smooth(method='lm', alpha=0.3, lwd=1.3, se=T) +
-#     #geom_smooth(pred_bef_fix, method='lm', mapping=aes(y=fit), color="black", lwd=1.5) +
-#     labs(x = "Log Richness",
-#          y = "Log Biomass",
-#          title = "Biomass vs Richness by Treatment (Linear Trendlines)") + 
-#     ylim(c(4,6.5))
-# )
 
 ```
 
@@ -318,10 +281,6 @@ prop_lost_by_yrTrtDI %>%
 
 ### Plot 3 from `nutnet_rare_spp.R`: Biomass/abudance difference over time
 Points in the plot are (Treatment year, Treatment) combinations, and the error bars represent the variation between sites for each of those combinations.
-
-* Maybe include `plot` in the first group_by? or exclude `site_code`?
-  * adding plot won't do anything I think. just adds another level of abstraction (ie we take 3 avrages instead of 2) (It's 2 right now because biomassResp aggregates over all the plots for a treatment, and the summary aggregates over all sites.)
-  * The only differences would be in the standard errors, i think? because we're changing the n we're looking at.( right now n is number of sites)
 ```{r slide6}
 # Get biomass difference by site code /treatment  / treatment year
 biomassResp <- nutnetRel %>%
@@ -478,9 +437,6 @@ metric_diff_by_group <- function(metric, grouping, remove_outliers = FALSE){
 #   mutate(se = sd / sqrt(N))
 
 
-# note: na.rm = T says that unseen combinations of the data are to be ignored
-  # this might have to be reconciled with the biotime plots, where we use the unseen combos of the datas as zeroes to generate the response "lost" variable.
-
 
 
 (rich_trt_di1 <- metric_diff_by_group("rich", "DIgroup") + 
@@ -518,14 +474,25 @@ rich_relAbund2 <- metric_diff_by_group("rich", "RelAbund_group2") +
        y = "Richness Difference (%)",
        x = "Treatment")
 
+ggsave("richness_by_rel_abund_group1.pdf", rich_relAbund1, 
+       device = "pdf", 
+       path = here("species_loss_gains_biotime", "figures"),
+       width = 10,
+       height = 7)
+ggsave("richness_by_rel_abund_group2.pdf", rich_relAbund2, 
+       device = "pdf", 
+       path = here("species_loss_gains_biotime", "figures"),
+       width = 10,
+       height = 7)
+
+
 rich_relAbund1 + rich_relAbund2 + plot_layout(guides = "collect")
 
 ```
 
 
 ### Plot c from Predict. Abundance Diff (%) by DI Group
-* rel cover = abundance ?
-* crazy outliers
+* there are some pretty big outliers
 ```{r slide8}
 
 (abund_trt_di1 <- metric_diff_by_group("rel_cover", "DIgroup", remove_outliers = TRUE) + 
@@ -536,26 +503,27 @@ rich_relAbund1 + rich_relAbund2 + plot_layout(guides = "collect")
 )  
 
 
-(abund_trt_di2 <- metric_diff_by_group("rel_cover", "DIgroup", remove_outliers = TRUE) + 
+(abund_trt_di2 <- metric_diff_by_group("rel_cover", "DIgroup2", remove_outliers = TRUE) + 
   labs(title = "Abundance by Treatment, over all Sites",
        subtitle = "DI Group 2",
        y = "Abundance Difference (%)",
        x = "Treatment")
 )  
-abund_trt_di1 / abund_trt_di2 + plot_layout(guides = "collect")
+abund_trt_di1 + abund_trt_di2 + plot_layout(guides = "collect")
 
 
 
 #outlier_exploration
 # typically the same sites seem to be troublemakers
 # these sites also tend to have really small control relative covers
-abund_diff_di_wide %>% 
-  filter(DIgroup == "Rare") %>%
-  group_by(site_code) %>% 
-  mutate(sumdiff = sum(NPK_diff, NP_diff, N_diff, Fence_diff, NPKFence_diff, na.rm = T)) %>%
-  ungroup() %>%
-  arrange(desc(abs(sumdiff))) %>%
-  select(site_code, Control, ends_with("diff"))
+
+# abund_diff_di_wide %>% 
+#   filter(DIgroup == "Rare") %>%
+#   group_by(site_code) %>% 
+#   mutate(sumdiff = sum(NPK_diff, NP_diff, N_diff, Fence_diff, NPKFence_diff, na.rm = T)) %>%
+#   ungroup() %>%
+#   arrange(desc(abs(sumdiff))) %>%
+#   select(site_code, Control, ends_with("diff"))
 
 
 ```
@@ -576,15 +544,14 @@ Same thing for relative abundance groupings
        y = "Abundance Difference (%)",
        x = "Treatment")
 )  
-abund_trt_relAbund1 / abund_trt_relAbund2 + plot_layout(guides = "collect")
+abund_trt_relAbund1 + abund_trt_relAbund2 + plot_layout(guides = "collect")
 
 ```
 
 
 ### Plot b from Biotime: Probability missing at the end ~ Relative Pretreatment Rank
 * adapted from `2_biotime_sp_loss.R`
-    * It looks like Kim uses some of this code in when she creates the dataframe `nutnetdf_allspp` (created above in chunk `slide5` above). I used Kim's adadptation as a starting point, but see my comments above `slide5` for some of my concerns about this.
-    * I'm also not sure about groupings. I took Biotime's `STUDY_ID` identifier to be the combination of `site_code` and `plot` in our data. 
+    * It looks like Kim uses some of this code in when she creates the dataframe `nutnetdf_allspp` (created above in chunk `slide5` above). I used Kim's adadptation as a starting point
 
 
 ```{r, cache = T}
@@ -746,10 +713,7 @@ year0_ranef_pred_interaction <- cbind(newdata_year0, year0_pred_interaction)
 
 ### Plot c from biotime.
 * adapted from `5_biotime_abund_biomass_loss.R`
-  * The biotime code looks like it actually has time t = 0 on the x axis... not a shifting t-1
-* see concerns from plot b in the chunk above.
-   * the `group_by`'s are my biggest concern.
-* The problem is that the `rel_cover` == 0 rows are artifically created in `nutnetdf_allspp` (with the spread/gather shenanigans), and every new row also corresponds to a new treatment year. This means that we're inducing a TON of zeroes, so that the rankings (which treat all the 0's as a tie for 0), create this huge gap in the ranking between 0 and the next value. To "fix" this issue, I excluded the 0's, ranked the remaining observations, and threw the 0's back in there.
+  * `rel_cover` == 0 rows are artifically created in `nutnetdf_allspp` (with the spread/gather shenanigans), and every new row also corresponds to a new treatment year. This means that we're inducing a TON of zeroes, so that the rankings (which treat all the 0's as a tie for 0), create this huge gap in the ranking between 0 and the next value. To "fix" this issue, I excluded the 0's, ranked the remaining observations, and threw the 0's back in there.
 
 Rank by site, treatment, plot, and year
 ```{r, cache = T}
