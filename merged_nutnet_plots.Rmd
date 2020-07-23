@@ -40,6 +40,11 @@ nutnetdf <- left_join(cover_april2020, comb_april2018, by = c("site_code", "plot
   group_by(site_code) %>%
   filter(n_distinct(year_trt) >= 5, site_code != "comp.pt") %>%
   ungroup
+
+# get the number of species, sites in the study
+num_species <- n_distinct(nutnetdf$Taxon)
+num_sites <- n_distinct(nutnetdf$site_code)
+
 ```
 
 * filtered for `live ==1`
@@ -337,6 +342,10 @@ trt_names <- c("Fence_diff" = "Fence", "N_diff" = "N", "NP_diff" = "NP", "NPK_di
 
 ```
 
+
+
+
+
 ### same plot as above, but for richness
 ```{r}
 rich_by_siteTrtYr <- nutnetRel %>%
@@ -378,12 +387,57 @@ rich_by_trtYr <- barGraphStats(data= rich_by_siteTrtYr,
 
 ```
 
+Adding in the a grouping (this one is RelAbund_Group) metric to this time series.
+```{r slide6}
+# Get biomass difference by site code /treatment  / treatment year
+biomassResp_RelAbundgroup <- nutnetRel %>%
+  filter(year_trt!=0)%>%
+  group_by(site_code, year_trt, trt, RelAbund_group)%>%
+  summarise(live_mass_mean=mean(live_mass)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = trt, 
+              values_from = live_mass_mean) %>%
+  mutate(NPK_diff=(NPK-Control)/Control*100, 
+         N_diff=(N-Control)/Control*100, 
+         NP_diff=(NP-Control)/Control*100,
+         #NP_diff=(NP+Fence-Control)/Control,
+         Fence_diff = (Fence - Control)/Control*100,
+         NPKFence_diff = (`NPK+Fence` - Control)/Control * 100)%>%
+  select(site_code, year_trt, RelAbund_group, NPK_diff, N_diff, NP_diff, Fence_diff, NPKFence_diff)%>%
+  #gather(key=trt, value=diff, NPK_diff:NPKFence_diff)%>%
+  pivot_longer(-c(site_code, year_trt, RelAbund_group), names_to = "trt", values_to = "diff") %>%
+  na.omit()
+
+
+# Aggregate the biomass difference over all sites, recording their standard error.
+biomassResp_summary_RelAbundgroup <- barGraphStats(data=biomassResp_RelAbundgroup, 
+                                     variable="diff", 
+                                     byFactorNames=c("year_trt", "trt", "RelAbund_group"))
+
+trt_names <- c("Fence_diff" = "Fence", "N_diff" = "N", "NP_diff" = "NP", "NPK_diff"= "NPK", "NPKFence_diff" = "NPK+Fence")
+(badBiomassFig_bypanel_RelAbundgroup <- ggplot(biomassResp_summary_RelAbundgroup, 
+                         aes(x=year_trt, y=mean, color = RelAbund_group)) +
+    geom_point(size=3) +
+    stat_smooth(method = "lm", formula = y ~ x + I(x^2), alpha = 0.4) +
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=0.2, alpha = 0.5) +
+    xlab('Treatment Year') + ylab('Biomass Difference (%)') +
+    geom_hline(yintercept=0) + 
+    facet_wrap(~trt, labeller = as_labeller(trt_names))
+  
+)
+
+
+
+  
+
+```
+
 
 
 
 ### Plot b from Predict: Richness Difference (%) by DIGroup
 * The boxplots are over all sites and all treatment years
-* plots the whole distibution of the data.
+* plots the whole distibution of the data. each point is a (site, trt, group)
 ```{r slide7}
 #' @param metric is a string, a numeric variable name (ie rich, relative cover)
 #' @param grouping is a string, name of a variable defining groups (ie DIgroup, AbundGroup)
