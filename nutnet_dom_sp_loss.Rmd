@@ -1,0 +1,159 @@
+---
+title: "Quick look at dom species loss"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+#### Read in data + preprocessing (the end result of this chunk is a dataframe with 1 row for each plot/year/species)
+
+```{r, message=F, warning=F}
+library(tidyverse)
+library(lme4)
+library(patchwork)
+library(emmeans)
+library(here)
+
+
+cover_april2020 <- read_csv(here("output-data", "NutNet_FullCoverData_ProcessedApril2020.csv")) %>%
+  select(site_name, site_code, year_trt, trt, plot, Taxon, RelAbund_group, DI,
+         totplotcover.yr.live, max_cover, live, Family, rel_abundance_year0)
+
+comb_april2018 <- read_csv(here("input-data", "comb-by-plot-clim-soil-diversity-09-Apr-2018.csv")) %>%
+  select(site_code, year_trt, plot, rich, live_mass, even)
+
+# combine cover + comb data
+# filter to only get sites with at least 5 treatment years.
+# filter to also get rid of comp.pt site, since it has problems with pretreatment data
+nutnetdf <- left_join(cover_april2020, comb_april2018, by = c("site_code", "plot", "year_trt")) %>%
+  group_by(site_code) %>%
+  filter(n_distinct(year_trt) >= 5, site_code != "comp.pt") %>%
+  mutate(RelAbund_group = fct_relevel(as.factor(RelAbund_group), 'Subordinate', after = 1)) %>%
+  ungroup() %>%
+  mutate(rel_cover = (max_cover/totplotcover.yr.live )*100)
+
+# pull out just the groupings
+relAbund_groups <- nutnetdf %>%
+  select(site_code, plot, Taxon, RelAbund_group) %>%
+  distinct()
+
+# Our data doesn't come with any rows where abundance is zero, 
+# so we assume that unseen combinations of the data are zeroes:
+# To be specific, for each site, we create every combination of (Plot, Year, Treatment) within that site (1)
+# Then we take all the Taxon found in that site (at any point) and
+# do a Cartesian product of (Plot, Year, Treatment) x Taxon. (2)
+# Then we create a column called PA to represent the new rows we added. (3)
+# Then we add back DI (since it had to be removed to do the groupings) (4)
+nutnetdf_allspp <- nutnetdf %>%
+  select(site_name, site_code, plot, year_trt, trt, Taxon, rel_cover) %>%
+  group_by(site_name) %>%
+  nest() %>% 
+  mutate(spread_df = purrr::map(data, ~spread(., key = Taxon, value = rel_cover, fill = 0) %>% #(1)
+                                  pivot_longer(-c("site_code", "plot", "year_trt", "trt"), 
+                                               names_to = "Taxon", values_to = "rel_cover"))) %>% #(2)
+  unnest(spread_df) %>%
+  ungroup() %>%
+  arrange(site_code, plot, Taxon, year_trt) %>%
+  select(-data) %>%
+  left_join(relAbund_groups, by = c("site_code", "plot", "Taxon"))
+  
+
+```
+
+#### Explore the importance of dominant species by splitting up the plots into timeseries -- before and after the loss of dominant species.
+
+Some stats: 
+
+* There are 127 (out of ~ 1400) plots with at least one dominant species
+* Out of these 127 plots, 36 lose a dominant species in at least one year. (loss = missing that year)
+
+```{r}
+# pull out only plots with dom species
+dom_split <- nutnetdf_allspp %>%
+  left_join(comb_april2018, by = c('site_code', 'plot', 'year_trt')) %>%
+  # get rid of species that aren't there in year 0
+  filter(!is.na(RelAbund_group)) %>%
+  mutate(dom_lost_sp = RelAbund_group == 'Dominant' & rel_cover == 0) %>%
+  group_by(site_code, plot) %>%
+  mutate(has_dom = any(RelAbund_group == 'Dominant', na.rm = T),
+         dom_lost_plot = any(dom_lost_sp)) %>%
+  ungroup() %>%
+  filter(has_dom)
+
+
+# record all times of dom sp loss for each plot
+dom_sp_lost_times <- dom_split %>%
+  filter(dom_lost_sp) %>%
+  select(site_code, plot, year_trt) %>%
+  unite("siteplot", site_code, plot, remove = F)
+  
+# pull out the FIRST time of dom sp loss for each plot (doesn't look at whether the sp comes back)
+dom_sp_firstloss_time <- dom_sp_lost_times %>%
+  group_by(siteplot) %>%
+  slice_min(year_trt) %>%
+  ungroup() %>%
+  rename(first_loss_yr = year_trt)
+
+dom_split %>%
+  filter(dom_lost_plot) %>%
+  unite("siteplot", site_code, plot, remove = F) %>%
+  ggplot(aes(year_trt, live_mass)) + 
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank()) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~siteplot) +
+  geom_vline(aes(xintercept = year_trt), data = dom_sp_lost_times)
+```
+
+#### Looking before/after first instance of dom sp loss
+
+*NOTE: This is comparing live mass before and after the FIRST vertical line in each plot (see figure above). This is almost certainly not optimal*
+```{r}
+# create an indicator for before/after the first instance of dom sp loss in each plot
+first_loss_df <- dom_split %>%
+  inner_join(dom_sp_firstloss_time, by = c('site_code', 'plot')) %>%
+  mutate(after_first_loss = year_trt > first_loss_yr) %>%
+  filter(!is.na(live_mass))
+
+
+# plot the data
+first_loss_bar <- ggplot(first_loss_df, aes(after_first_loss, log(live_mass))) +
+  geom_col() +
+  labs(title = 'maybe there is a decrease in biomass after dom sp loss (?)')
+
+first_loss_ts <- ggplot(first_loss_df, aes(year_trt, log(live_mass))) +
+  geom_point(aes(color = after_first_loss)) +
+  labs(title = "but.. maybe no difference after taking into account year_trt (?)")
+  
+first_loss_bar + first_loss_ts + 
+  plot_layout(nrow = 2)
+  
+```
+
+#### Model to control for trt/year/plot
+
+Regression on live mass ~ "indicator for whether a dominant species was lost at some previous time point", using only the subset of the data with a dom species. Control for treatment and year, with varying intercept for site/plot 
+
+Fit model to see if the difference between masses is significant, after including trt/year/site
+```{r}
+# fit model
+first_loss_mass_mod <- lmer(log(live_mass) ~ after_first_loss + trt + year_trt 
+                            + (1|site_code/plot), 
+                 data = first_loss_df)
+
+# see the predicted mean live mass between the two groups
+# the means are very similar -- from this model, the difference is not significant.
+emmeans(first_loss_mass_mod, ~after_first_loss)
+```
+
+To summarize: if we only look at plots with dominant species loss, there likely isn't a large difference in live biomass before and after the *first instance* of dominant species loss
+
+A possible explanation is that I split the groups up incorrectly -- using the first instance of dominant species loss is probably a bad idea, esp when we see that dominant species often leave and come back to a plot... but what's a better way to do it?
+
+Another possible explanation is that we need to consider more factors. What about the weather/soil conditions/ect?
+
